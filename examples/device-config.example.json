@@ -1,0 +1,36 @@
+{
+  "ssid": "DeskDuo-Example",
+  "wifiPassword": "replace-with-wifi-password",
+  "usageToken": "replace-with-16-plus-char-token",
+  "weather": {
+    "url": "",
+    "headers": {},
+    "refreshSeconds": 900,
+    "label": "Weather",
+    "fields": {
+      "temperature": "current.temperature_2m",
+      "humidity": "current.relative_humidity_2m",
+      "weatherCode": "current.weather_code",
+      "updatedAt": "current.time",
+      "utcOffsetSeconds": "utc_offset_seconds",
+      "hourlyTimes": "hourly.time",
+      "hourlyTemperatures": "hourly.temperature_2m",
+      "hourlyRainProbability": "hourly.precipitation_probability"
+    }
+  },
+  "stocks": {
+    "url": "",
+    "headers": {},
+    "refreshSeconds": 300
+  },
+  "autoRotateSeconds": 20,
+  "touch": {
+    "swapAxes": false,
+    "invertX": false,
+    "invertY": false,
+    "minX": 0,
+    "maxX": 4095,
+    "minY": 0,
+    "maxY": 4095
+  }
+}

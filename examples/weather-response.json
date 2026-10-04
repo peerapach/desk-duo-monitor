@@ -1,0 +1,20 @@
+{
+  "_simulated": true,
+  "current": {
+    "temperature_2m": 31.2,
+    "relative_humidity_2m": 65,
+    "weather_code": 2,
+    "time": "2026-10-04T12:00"
+  },
+  "utc_offset_seconds": 25200,
+  "hourly": {
+    "time": [
+      "2026-10-04T12:00",
+      "2026-10-04T13:00",
+      "2026-10-04T14:00",
+      "2026-10-04T15:00"
+    ],
+    "temperature_2m": [31.2, 31.7, 30.8, 29.5],
+    "precipitation_probability": [5, 10, 20, 15]
+  }
+}
