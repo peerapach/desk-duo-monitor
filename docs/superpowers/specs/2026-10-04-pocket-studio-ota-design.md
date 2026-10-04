@@ -50,7 +50,7 @@ Proposed 4 MiB partition geometry, to validate against actual build output:
 
 Each slot is 1,966,080 bytes. Both slots end below the physical flash boundary and retain the current NVS and PHY ranges. Assets and application must fit one slot; the packaging script must verify all offsets, bounds, and image sizes rather than assuming a factory partition.
 
-The one-time migration updates the bootloader, partition table, OTA data, and initial application through USB, after a fresh device backup. Do not erase or overwrite NVS. Current usage token, admin credential, Wi-Fi, endpoint settings, and touch calibration must survive and be checked after reboot. Subsequent Wi-Fi uploads accept application images only; reject merged full-flash packages.
+The one-time migration updates the bootloader, partition table, OTA data, and initial application through USB. The user explicitly declined a new device backup during execution; honor this instruction for their board and use a clearly named explicit skip-backup option in the general migration tool. Do not erase or overwrite NVS. Current usage token, admin credential, Wi-Fi, endpoint settings, and touch calibration must survive and be checked after reboot. Subsequent Wi-Fi uploads accept application images only; reject merged full-flash packages.
 
 ## Upload and recovery constraints
 
