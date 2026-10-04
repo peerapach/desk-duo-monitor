@@ -4,8 +4,11 @@
 import argparse
 import json
 import math
+import multiprocessing
 import re
+import signal
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -22,6 +25,11 @@ _TIMESTAMP_PATTERN = re.compile(
 
 class DeliveryError(RuntimeError):
     """A sanitized failure while sending usage to the receiver."""
+
+
+class _HookCancelled(BaseException):
+    def __init__(self, signum):
+        self.signum = signum
 
 
 def _reject_json_constant(_value):
@@ -41,7 +49,10 @@ def _utc_timestamp(value, field_name):
         raise ValueError(f"invalid {field_name}") from None
     if parsed.tzinfo is None or parsed.utcoffset() is None:
         raise ValueError(f"invalid {field_name}")
-    utc = parsed.astimezone(timezone.utc)
+    try:
+        utc = parsed.astimezone(timezone.utc)
+    except (OverflowError, ValueError):
+        raise ValueError(f"invalid {field_name}") from None
     timespec = "microseconds" if utc.microsecond else "seconds"
     return utc.isoformat(timespec=timespec).replace("+00:00", "Z")
 
@@ -63,7 +74,9 @@ def _usage_fraction(value, field_name):
     if fraction < 0 or fraction > 1:
         raise ValueError(f"invalid {field_name}")
     percent = fraction * 100
-    return int(percent) if percent.is_integer() else percent
+    if isinstance(percent, float) and percent.is_integer():
+        return int(percent)
+    return percent
 
 
 def _build_window(event, *, fraction_field, minutes_field, reset_field):
@@ -190,8 +203,60 @@ class _RejectRedirects(urllib.request.HTTPRedirectHandler):
         return None
 
 
+def _deliver_in_worker(control_pipe):
+    """Perform the blocking part in a killable process so progress cannot extend the deadline."""
+    delivered = False
+    try:
+        endpoint, token, body, deadline = control_pipe.recv()
+        timeout = deadline - time.monotonic()
+        if timeout > 0:
+            request = urllib.request.Request(
+                endpoint,
+                data=body,
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {token}",
+                },
+                method="POST",
+            )
+            opener = urllib.request.build_opener(
+                urllib.request.ProxyHandler({}),
+                _RejectRedirects(),
+            )
+            try:
+                with opener.open(request, timeout=timeout) as response:
+                    status = response.getcode()
+                delivered = 200 <= status < 300
+            except urllib.error.HTTPError as error:
+                error.close()
+    except Exception:
+        delivered = False
+    try:
+        control_pipe.send(delivered)
+    except Exception:
+        pass
+    finally:
+        control_pipe.close()
+
+
+def _stop_worker(process):
+    if process.pid is None:
+        return
+    try:
+        if process.is_alive():
+            process.terminate()
+            process.join(timeout=0.2)
+        if process.is_alive():
+            process.kill()
+            process.join(timeout=0.2)
+        if not process.is_alive():
+            process.close()
+    except Exception:
+        pass
+
+
 def send_usage(payload, config):
-    """POST one normalized payload; never follow a receiver redirect."""
+    """POST one normalized payload with a total wall-clock deadline."""
     validated = _validated_config(config)
     if not isinstance(payload, dict):
         raise ValueError("invalid usage payload")
@@ -200,28 +265,32 @@ def send_usage(payload, config):
     except (TypeError, ValueError, UnicodeError):
         raise ValueError("invalid usage payload") from None
 
-    request = urllib.request.Request(
-        validated["endpoint"],
-        data=body,
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {validated['bearerToken']}",
-        },
-        method="POST",
+    deadline = time.monotonic() + validated["timeoutSeconds"]
+    context = multiprocessing.get_context("spawn")
+    parent_pipe, child_pipe = context.Pipe()
+    process = context.Process(
+        name="codexbar-usage-transport",
+        target=_deliver_in_worker,
+        args=(child_pipe,),
+        daemon=True,
     )
-    opener = urllib.request.build_opener(
-        urllib.request.ProxyHandler({}),
-        _RejectRedirects(),
-    )
+    delivered = False
     try:
-        with opener.open(request, timeout=validated["timeoutSeconds"]) as response:
-            status = response.getcode()
-    except urllib.error.HTTPError as error:
-        error.close()
-        raise DeliveryError("delivery failed") from None
+        process.start()
+        child_pipe.close()
+        remaining = deadline - time.monotonic()
+        if remaining > 0:
+            parent_pipe.send((validated["endpoint"], validated["bearerToken"], body, deadline))
+            remaining = deadline - time.monotonic()
+        if remaining > 0 and parent_pipe.poll(remaining):
+            delivered = parent_pipe.recv() is True and time.monotonic() <= deadline
     except Exception:
-        raise DeliveryError("delivery failed") from None
-    if not 200 <= status < 300:
+        delivered = False
+    finally:
+        parent_pipe.close()
+        child_pipe.close()
+        _stop_worker(process)
+    if not delivered:
         raise DeliveryError("delivery failed")
 
 
@@ -261,5 +330,27 @@ def main(argv=None):
         return 2
 
 
+def _cli_entrypoint():
+    """Let send_usage clean up its worker before honoring CodexBar cancellation."""
+    handled_signals = (signal.SIGTERM, signal.SIGINT)
+    previous_handlers = {}
+
+    def cancel(signum, _frame):
+        for handled_signal in handled_signals:
+            signal.signal(handled_signal, signal.SIG_IGN)
+        raise _HookCancelled(signum)
+
+    try:
+        for handled_signal in handled_signals:
+            previous_handlers[handled_signal] = signal.signal(handled_signal, cancel)
+        try:
+            return main()
+        except _HookCancelled as cancelled:
+            return 128 + cancelled.signum
+    finally:
+        for handled_signal, previous_handler in previous_handlers.items():
+            signal.signal(handled_signal, previous_handler)
+
+
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(_cli_entrypoint())

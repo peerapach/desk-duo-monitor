@@ -40,3 +40,180 @@ The default sandbox denied local socket binding for the mandatory HTTP fixtures.
 The sender forwards only allowlisted provider usage data, preserves zero, omits absent windows, validates dates and finite numeric values, refuses redirects, bounds request time, performs no retries, and prints coarse sanitized failures without tokens or endpoint URLs. The hook example contains only a `hooks` JSON merge fragment; setup text says to retain the existing CodexBar `version` and `providers` configuration. No app hook, device config, Apps Script deployment, serial port, or physical receiver was changed or contacted.
 
 The receiver firmware and physical ESP32 behavior remain unverified and are subsequent work. The shared worktree also has an unstaged `.gitignore` change for `.device-backups/` and `.platformio/` that was outside Task 2 and excluded from the Task 2 commit.
+
+## Review round 1/5 fixes
+
+The review's three findings are covered by these regressions:
+
+- `NormalizeEventTests.test_normalizes_integer_zero_and_one_usage_fractions` exercises integer `0` and `1` with Python 3.9.6 as well as Python 3.12.8.
+- `NormalizeEventTests.test_timestamp_underflow_is_a_sanitized_cli_error` runs the actual CLI with `0001-01-01T00:00:00+07:00` and checks exit 2, coarse stderr, and empty stdout.
+- `DeliveryTests.test_timeout_is_an_overall_deadline_and_stops_slow_header_transport` uses a real loopback responder that emits one response-header byte every 15 ms. It checks delivery fails under a 0.6-second deadline, the response does not finish, the peer and handler close, and no transport worker remains.
+- `DeliveryTests.test_sigterm_cancels_cli_and_closes_worker_transport` starts the real CLI, sends SIGTERM after the request arrives, and checks exit 143 plus peer and handler closure before the slow response finishes.
+
+### RED evidence
+
+Integer and date regressions were run against the installed Python 3.9.6:
+
+```text
+rtk proxy /usr/bin/python3 -m unittest tests.test_codexbar_sender.NormalizeEventTests.test_normalizes_integer_zero_and_one_usage_fractions tests.test_codexbar_sender.NormalizeEventTests.test_timestamp_underflow_is_a_sanitized_cli_error -v
+```
+
+Observed: **FAILED (failures=3)**. Both integer subtests reported `AttributeError: 'int' object has no attribute 'is_integer'`. The CLI date case returned 1 instead of 2 and printed `OverflowError: date value out of range`.
+
+The initial total-deadline regression was run against a slow loopback HTTP fixture:
+
+```text
+rtk proxy /usr/local/bin/python3 -m unittest tests.test_codexbar_sender.DeliveryTests.test_timeout_is_an_overall_deadline_and_stops_slow_header_transport -v
+```
+
+Observed: **FAILED** with `a slow but progressing response must time out`; the sender returned success only after the slow response completed (the test took 3.016 seconds with a 0.6-second configured timeout).
+
+The cancellation regression was run before installing CLI cleanup handling:
+
+```text
+rtk proxy /usr/local/bin/python3 -m unittest tests.test_codexbar_sender.DeliveryTests.test_sigterm_cancels_cli_and_closes_worker_transport -v
+```
+
+Observed: **FAILED**, `return_code` was `-15` instead of `143`; default SIGTERM killed the CLI before it could reap its spawned transport worker.
+
+### GREEN evidence
+
+After the fixes, the two transport lifecycle regressions passed together:
+
+```text
+rtk proxy /usr/local/bin/python3 -m unittest tests.test_codexbar_sender.DeliveryTests.test_timeout_is_an_overall_deadline_and_stops_slow_header_transport tests.test_codexbar_sender.DeliveryTests.test_sigterm_cancels_cli_and_closes_worker_transport -v
+```
+
+```text
+Ran 2 tests in 1.891s
+
+OK
+```
+
+The older interpreter regression checks also passed:
+
+```text
+rtk proxy /usr/bin/python3 -m unittest tests.test_codexbar_sender.NormalizeEventTests.test_normalizes_integer_zero_and_one_usage_fractions tests.test_codexbar_sender.NormalizeEventTests.test_timestamp_underflow_is_a_sanitized_cli_error -v
+```
+
+```text
+Ran 2 tests in 0.108s
+
+OK
+```
+
+### Final full-suite output
+
+Python 3.9.6:
+
+```text
+rtk proxy /usr/bin/python3 -m unittest discover -s tests -p 'test_*.py' -v
+
+Ran 35 tests in 5.983s
+
+OK
+```
+
+Python 3.12.8:
+
+```text
+rtk proxy /usr/local/bin/python3 -m unittest discover -s tests -p 'test_*.py' -v
+
+Ran 35 tests in 6.281s
+
+OK
+```
+
+Both full runs included normalization, config, CLI, actual loopback POST, slow-header deadline, redirect, timeout, and SIGTERM cleanup cases. All five example JSON files also parsed under Python 3.9, and the Python 3.9 dry-run output matched `examples/usage-response.json` exactly.
+
+Verbose test names and final summaries:
+
+```text
+Python 3.9.6
+test_accepts_input_at_four_kibibytes (test_codexbar_sender.CliTests) ... ok
+test_dry_run_needs_no_config_and_prints_normalized_json_without_network (test_codexbar_sender.CliTests) ... ok
+test_rejects_input_over_four_kibibytes (test_codexbar_sender.CliTests) ... ok
+test_rejects_invalid_json_and_non_object_json (test_codexbar_sender.CliTests) ... ok
+test_returns_two_when_delivery_config_is_missing (test_codexbar_sender.CliTests) ... ok
+test_accepts_https_receiver_endpoint (test_codexbar_sender.ConfigTests) ... ok
+test_loads_valid_config_and_defaults_timeout_to_five_seconds (test_codexbar_sender.ConfigTests) ... ok
+test_rejects_empty_and_control_character_tokens (test_codexbar_sender.ConfigTests) ... ok
+test_rejects_invalid_endpoints (test_codexbar_sender.ConfigTests) ... ok
+test_rejects_missing_or_malformed_config (test_codexbar_sender.ConfigTests) ... ok
+test_rejects_timeouts_outside_finite_point_one_to_thirty_seconds (test_codexbar_sender.ConfigTests) ... ok
+test_accepts_http_204_as_success (test_codexbar_sender.DeliveryTests) ... ok
+test_cli_returns_one_and_redacts_delivery_failure (test_codexbar_sender.DeliveryTests) ... ok
+test_posts_json_to_receiver_with_expected_path_and_bearer_header (test_codexbar_sender.DeliveryTests) ... ok
+test_receiver_rejection_returns_sanitized_delivery_error (test_codexbar_sender.DeliveryTests) ... ok
+test_redirect_is_rejected_before_destination_receives_bearer_request (test_codexbar_sender.DeliveryTests) ... ok
+test_send_usage_validates_direct_config_before_network (test_codexbar_sender.DeliveryTests) ... ok
+test_sigterm_cancels_cli_and_closes_worker_transport (test_codexbar_sender.DeliveryTests) ... ok
+test_timeout_is_an_overall_deadline_and_stops_slow_header_transport (test_codexbar_sender.DeliveryTests) ... ok
+test_timeout_returns_sanitized_delivery_error (test_codexbar_sender.DeliveryTests) ... ok
+test_accepts_both_supported_providers (test_codexbar_sender.NormalizeEventTests) ... ok
+test_normalizes_fractional_usage_and_timestamp_to_utc_without_identity (test_codexbar_sender.NormalizeEventTests) ... ok
+test_normalizes_integer_zero_and_one_usage_fractions (test_codexbar_sender.NormalizeEventTests) ... ok
+test_omits_secondary_window_when_secondary_fraction_is_absent (test_codexbar_sender.NormalizeEventTests) ... ok
+test_omits_window_fields_when_usage_fraction_is_absent (test_codexbar_sender.NormalizeEventTests) ... ok
+test_preserves_event_with_no_usage_windows_as_unknown_data (test_codexbar_sender.NormalizeEventTests) ... ok
+test_rejects_boolean_and_nonfinite_usage_fractions (test_codexbar_sender.NormalizeEventTests) ... ok
+test_rejects_fraction_outside_zero_to_one (test_codexbar_sender.NormalizeEventTests) ... ok
+test_rejects_malformed_source_and_reset_dates (test_codexbar_sender.NormalizeEventTests) ... ok
+test_rejects_non_object_event (test_codexbar_sender.NormalizeEventTests) ... ok
+test_rejects_nonpositive_or_nonfinite_window_minutes (test_codexbar_sender.NormalizeEventTests) ... ok
+test_rejects_reset_and_source_timestamps_without_explicit_timezone (test_codexbar_sender.NormalizeEventTests) ... ok
+test_rejects_unknown_provider (test_codexbar_sender.NormalizeEventTests) ... ok
+test_rejects_wrong_event_name (test_codexbar_sender.NormalizeEventTests) ... ok
+test_timestamp_underflow_is_a_sanitized_cli_error (test_codexbar_sender.NormalizeEventTests) ... ok
+
+Ran 35 tests in 5.983s
+
+OK
+
+Python 3.12.8
+test_accepts_input_at_four_kibibytes (test_codexbar_sender.CliTests.test_accepts_input_at_four_kibibytes) ... ok
+test_dry_run_needs_no_config_and_prints_normalized_json_without_network (test_codexbar_sender.CliTests.test_dry_run_needs_no_config_and_prints_normalized_json_without_network) ... ok
+test_rejects_input_over_four_kibibytes (test_codexbar_sender.CliTests.test_rejects_input_over_four_kibibytes) ... ok
+test_rejects_invalid_json_and_non_object_json (test_codexbar_sender.CliTests.test_rejects_invalid_json_and_non_object_json) ... ok
+test_returns_two_when_delivery_config_is_missing (test_codexbar_sender.CliTests) ... ok
+test_accepts_https_receiver_endpoint (test_codexbar_sender.ConfigTests) ... ok
+test_loads_valid_config_and_defaults_timeout_to_five_seconds (test_codexbar_sender.ConfigTests) ... ok
+test_rejects_empty_and_control_character_tokens (test_codexbar_sender.ConfigTests) ... ok
+test_rejects_invalid_endpoints (test_codexbar_sender.ConfigTests) ... ok
+test_rejects_missing_or_malformed_config (test_codexbar_sender.ConfigTests) ... ok
+test_rejects_timeouts_outside_finite_point_one_to_thirty_seconds (test_codexbar_sender.ConfigTests) ... ok
+test_accepts_http_204_as_success (test_codexbar_sender.DeliveryTests) ... ok
+test_cli_returns_one_and_redacts_delivery_failure (test_codexbar_sender.DeliveryTests) ... ok
+test_posts_json_to_receiver_with_expected_path_and_bearer_header (test_codexbar_sender.DeliveryTests) ... ok
+test_receiver_rejection_returns_sanitized_delivery_error (test_codexbar_sender.DeliveryTests) ... ok
+test_redirect_is_rejected_before_destination_receives_bearer_request (test_codexbar_sender.DeliveryTests) ... ok
+test_send_usage_validates_direct_config_before_network (test_codexbar_sender.DeliveryTests) ... ok
+test_sigterm_cancels_cli_and_closes_worker_transport (test_codexbar_sender.DeliveryTests) ... ok
+test_timeout_is_an_overall_deadline_and_stops_slow_header_transport (test_codexbar_sender.DeliveryTests) ... ok
+test_timeout_returns_sanitized_delivery_error (test_codexbar_sender.DeliveryTests) ... ok
+test_accepts_both_supported_providers (test_codexbar_sender.NormalizeEventTests) ... ok
+test_normalizes_fractional_usage_and_timestamp_to_utc_without_identity (test_codexbar_sender.NormalizeEventTests) ... ok
+test_normalizes_integer_zero_and_one_usage_fractions (test_codexbar_sender.NormalizeEventTests) ... ok
+test_omits_secondary_window_when_secondary_fraction_is_absent (test_codexbar_sender.NormalizeEventTests) ... ok
+test_omits_window_fields_when_usage_fraction_is_absent (test_codexbar_sender.NormalizeEventTests) ... ok
+test_preserves_event_with_no_usage_windows_as_unknown_data (test_codexbar_sender.NormalizeEventTests) ... ok
+test_rejects_boolean_and_nonfinite_usage_fractions (test_codexbar_sender.NormalizeEventTests) ... ok
+test_rejects_fraction_outside_zero_to_one (test_codexbar_sender.NormalizeEventTests) ... ok
+test_rejects_malformed_source_and_reset_dates (test_codexbar_sender.NormalizeEventTests) ... ok
+test_rejects_non_object_event (test_codexbar_sender.NormalizeEventTests) ... ok
+test_rejects_nonpositive_or_nonfinite_window_minutes (test_codexbar_sender.NormalizeEventTests) ... ok
+test_rejects_reset_and_source_timestamps_without_explicit_timezone (test_codexbar_sender.NormalizeEventTests) ... ok
+test_rejects_unknown_provider (test_codexbar_sender.NormalizeEventTests) ... ok
+test_rejects_wrong_event_name (test_codexbar_sender.NormalizeEventTests) ... ok
+test_timestamp_underflow_is_a_sanitized_cli_error (test_codexbar_sender.NormalizeEventTests) ... ok
+
+Ran 35 tests in 6.281s
+
+OK
+```
+
+### Fix review
+
+The sender now performs blocking HTTP work in a `spawn` worker process and starts a monotonic deadline before worker launch. The parent supplies request data over a private multiprocessing pipe after launch; the bearer token is absent from worker process arguments and is never logged. The parent accepts a result only by the deadline, then terminates and reaps the worker on timeout. The CLI entrypoint temporarily handles SIGTERM/SIGINT so cancellation unwinds through that cleanup; it restores the prior handlers before exit. Library calls do not install process-global signal handlers. README now declares Python 3.9+ and the hook example points to the available `/usr/local/bin/python3` (3.12.8); Python 3.9.6 was also exercised.
+
+Only the sender, its tests, README, hook example, and this report are in the Task 2 fix set. The worktree's unrelated `.gitignore` and design-spec edits were left unstaged. The sender still has no live receiver firmware or physical-device verification; loopback fixtures are the only transport targets used.

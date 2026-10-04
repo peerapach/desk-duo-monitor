@@ -7,7 +7,7 @@
         "enabled": true,
         "event": "usage_updated",
         "provider": "claude",
-        "executable": "/ABSOLUTE/PATH/TO/python3",
+        "executable": "/usr/local/bin/python3",
         "arguments": [
           "/ABSOLUTE/PATH/TO/esp32-monitor/bridge/codexbar_sender.py",
           "--config",
@@ -20,7 +20,7 @@
         "enabled": true,
         "event": "usage_updated",
         "provider": "codex",
-        "executable": "/ABSOLUTE/PATH/TO/python3",
+        "executable": "/usr/local/bin/python3",
         "arguments": [
           "/ABSOLUTE/PATH/TO/esp32-monitor/bridge/codexbar_sender.py",
           "--config",

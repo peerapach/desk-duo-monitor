@@ -8,6 +8,8 @@
 
 ## Usage จาก CodexBar app
 
+ต้องใช้ Python 3.9 ขึ้นไปและใช้เฉพาะ standard library บนเครื่องนี้ `/usr/local/bin/python3` เป็น Python 3.12.8 และ `/usr/bin/python3` เป็น 3.9.6 ซึ่งทั้งคู่รองรับตัวส่ง ตัวอย่าง hook ใช้ absolute path `/usr/local/bin/python3`; เปลี่ยนเป็น absolute path ของ Python 3.9+ บนเครื่องที่ติดตั้ง CodexBar หาก path ต่างกัน
+
 CodexBar ส่ง event `usage_updated` เป็น JSON ทาง stdin ให้โปรแกรมที่ตั้งไว้ใน Settings → Hooks ตัวส่งนี้รันตรงจาก absolute executable และ arguments ของ hook โดยไม่ใช้ shell และไม่ต้องติดตั้ง CodexBar CLI เอกสาร CodexBar ระบุว่ามีช่วงจำกัดการเรียกซ้ำ 600 วินาทีต่อ provider/account/window สำหรับ event นี้ รายละเอียดอาจเปลี่ยนตามเวอร์ชัน ให้ตรวจ Settings → Hooks และเอกสาร [External event hooks](https://github.com/steipete/CodexBar/blob/main/docs/configuration.md#external-event-hooks) ของเวอร์ชันที่ติดตั้ง
 
 event ใช้เปอร์เซ็นต์แบบสัดส่วน `0–1`; sender แปลงเป็น `usedPercent` ช่วง `0–100` เวลา `updatedAt` มาจาก `timestamp` ใน event และแปลงเป็น UTC ไม่ได้ใช้เวลาที่ส่ง request แทน ข้อมูล `primary` และ `secondary` จะมีเฉพาะเมื่อ event มีเปอร์เซ็นต์ของหน้าต่างนั้น ค่า `0` เป็นค่าจริง ส่วนหน้าต่างที่ขาดจะไม่ถูกสร้างขึ้นใหม่

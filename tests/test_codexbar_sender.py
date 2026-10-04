@@ -2,6 +2,10 @@ import contextlib
 import io
 import json
 import math
+import multiprocessing
+import signal
+import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -106,6 +110,68 @@ class Receiver:
         self.thread.join(timeout=2)
 
 
+class SlowHeaderReceiver:
+    def __init__(self, byte_delay=0.015, slow_bytes=100):
+        self.byte_delay = byte_delay
+        self.slow_bytes = slow_bytes
+        self.request_received = threading.Event()
+        self.peer_closed = threading.Event()
+        self.response_finished = threading.Event()
+        self.handler_finished = threading.Event()
+        self.connection = None
+
+        receiver = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(self):
+                self.rfile.read(int(self.headers.get("Content-Length", "0")))
+                receiver.request_received.set()
+                receiver.connection = self.connection
+                response = (
+                    b"HTTP/1.1 204 No Content\r\nX-Slow: "
+                    + b"x" * receiver.slow_bytes
+                    + b"\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                )
+                try:
+                    for byte in response:
+                        self.wfile.write(bytes((byte,)))
+                        self.wfile.flush()
+                        time.sleep(receiver.byte_delay)
+                    receiver.response_finished.set()
+                except OSError:
+                    receiver.peer_closed.set()
+                finally:
+                    receiver.handler_finished.set()
+
+            def log_message(self, _format, *_args):
+                pass
+
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.server.daemon_threads = True
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+
+    @property
+    def endpoint(self):
+        return f"http://127.0.0.1:{self.server.server_port}/api/usage"
+
+    def __enter__(self):
+        self.thread.start()
+        return self
+
+    def __exit__(self, *_args):
+        self.server.shutdown()
+        if not self.handler_finished.wait(timeout=1):
+            if self.connection is not None:
+                try:
+                    self.connection.shutdown(2)
+                except OSError:
+                    pass
+                self.connection.close()
+            self.handler_finished.wait(timeout=1)
+        self.server.server_close()
+        self.thread.join(timeout=2)
+
+
 def set_stdin(data):
     return patch("sys.stdin", io.TextIOWrapper(io.BytesIO(data), encoding="utf-8"))
 
@@ -141,6 +207,15 @@ class NormalizeEventTests(SenderTestCase):
         for provider in ("claude", "codex"):
             with self.subTest(provider=provider):
                 self.assertEqual(normalize_event(event(provider=provider))["provider"], provider)
+
+    def test_normalizes_integer_zero_and_one_usage_fractions(self):
+        for fraction, expected in ((0, 0), (1, 100)):
+            with self.subTest(fraction=fraction):
+                try:
+                    normalized = normalize_event(event(usagePercent=fraction))
+                except Exception as error:
+                    self.fail(f"integer usage fraction raised {type(error).__name__}")
+                self.assertEqual(normalized["primary"]["usedPercent"], expected)
 
     def test_rejects_wrong_event_name(self):
         with self.assertRaises(ValueError):
@@ -214,6 +289,25 @@ class NormalizeEventTests(SenderTestCase):
         ):
             with self.subTest(key=key, value=value), self.assertRaises(ValueError):
                 normalize_event(event(**{key: value}))
+
+    def test_timestamp_underflow_is_a_sanitized_cli_error(self):
+        invalid_event = {
+            "event": "usage_updated",
+            "provider": "codex",
+            "timestamp": "0001-01-01T00:00:00+07:00",
+            "usagePercent": 0,
+        }
+        script = Path(__file__).parents[1] / "bridge" / "codexbar_sender.py"
+        result = subprocess.run(
+            [sys.executable, str(script), "--dry-run"],
+            input=json.dumps(invalid_event),
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertEqual(result.stderr, "codexbar sender: invalid input or configuration\n")
+        self.assertEqual(result.stdout, "")
 
 
 class ConfigTests(SenderTestCase):
@@ -399,6 +493,77 @@ class DeliveryTests(SenderTestCase):
         self.assertEqual(str(raised.exception), "delivery failed")
         self.assertNotIn(TOKEN, str(raised.exception))
         self.assertNotIn(receiver.endpoint, str(raised.exception))
+
+    def test_timeout_is_an_overall_deadline_and_stops_slow_header_transport(self):
+        before = {process.pid for process in multiprocessing.active_children()}
+        with SlowHeaderReceiver() as receiver:
+            started = time.monotonic()
+            failed = False
+            try:
+                send_usage(PAYLOAD, config(receiver.endpoint, timeout=0.6))
+            except DeliveryError as error:
+                failed = str(error) == "delivery failed"
+            elapsed = time.monotonic() - started
+
+            self.assertTrue(receiver.request_received.wait(0.1), "receiver never got the POST")
+            self.assertTrue(failed, "a slow but progressing response must time out")
+            self.assertLess(elapsed, 1.2, "total delivery duration exceeded the configured deadline")
+            self.assertTrue(receiver.handler_finished.wait(1), "timed-out request left receiver-side transport active")
+            self.assertTrue(receiver.peer_closed.is_set(), "sender did not close the stalled response connection")
+            self.assertFalse(receiver.response_finished.is_set(), "sender waited for all slow header bytes")
+
+        leaked = [process for process in multiprocessing.active_children() if process.pid not in before]
+        self.assertEqual(leaked, [], "sender left a transport worker process running")
+
+    def test_sigterm_cancels_cli_and_closes_worker_transport(self):
+        script = Path(__file__).parents[1] / "bridge" / "codexbar_sender.py"
+        with SlowHeaderReceiver(byte_delay=0.02, slow_bytes=500) as receiver, \
+                tempfile.TemporaryDirectory() as directory:
+            config_path = Path(directory) / "bridge.json"
+            config_path.write_text(json.dumps(config(receiver.endpoint, timeout=8)), encoding="utf-8")
+            process = subprocess.Popen(
+                [sys.executable, str(script), "--config", str(config_path)],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            cancelled = threading.Event()
+
+            def supply_event():
+                try:
+                    process.stdin.write(json.dumps(event()).encode())
+                    process.stdin.close()
+                except OSError:
+                    pass
+
+            def cancel_after_post():
+                if receiver.request_received.wait(timeout=3):
+                    process.terminate()
+                    cancelled.set()
+
+            canceller = threading.Thread(target=cancel_after_post, daemon=True)
+            writer = threading.Thread(target=supply_event, daemon=True)
+            canceller.start()
+            writer.start()
+            try:
+                process.wait(timeout=5)
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                    process.wait(timeout=2)
+                canceller.join(timeout=1)
+                writer.join(timeout=1)
+
+            return_code = process.returncode
+            peer_closed = receiver.peer_closed.wait(timeout=1)
+            handler_finished = receiver.handler_finished.wait(timeout=1)
+            response_finished = receiver.response_finished.is_set()
+
+        self.assertTrue(cancelled.is_set(), "sender never started its request")
+        self.assertEqual(return_code, 128 + signal.SIGTERM)
+        self.assertTrue(peer_closed, "SIGTERM left a child transport reading the response")
+        self.assertTrue(handler_finished, "SIGTERM left receiver-side transport activity running")
+        self.assertFalse(response_finished, "orphaned transport consumed all slow header bytes")
 
     def test_send_usage_validates_direct_config_before_network(self):
         with self.assertRaises(ValueError):
