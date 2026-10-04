@@ -10,7 +10,7 @@ constexpr int ESP_OK=0,ESP_FAIL=-1,HTTPD_SOCK_ERR_TIMEOUT=-3,pdPASS=1;
 #define ESP_ERROR_CHECK(value) assert((value)==ESP_OK)
 using httpd_handle_t=void*;
 enum httpd_method_t {HTTP_GET,HTTP_POST};
-struct Exchange {std::map<std::string,std::string> headers;std::string body,status,response;size_t offset=0;int reads=0;};
+struct Exchange {std::map<std::string,std::string> headers;std::string body,status,response;size_t offset=0;int reads=0;bool for_async_req=false;};
 struct httpd_req_t {httpd_handle_t handle=nullptr;httpd_method_t method=HTTP_POST;const char* uri="/api/firmware";size_t content_len=0;Exchange* exchange=nullptr;};
 using Handler=esp_err_t(*)(httpd_req_t*);
 struct httpd_uri_t {const char* uri;httpd_method_t method;Handler handler;};
@@ -30,7 +30,7 @@ int httpd_req_to_sockfd(httpd_req_t*);
 int httpd_sess_trigger_close(httpd_handle_t,int);
 int httpd_start(httpd_handle_t*,const httpd_config_t*);
 int httpd_register_uri_handler(httpd_handle_t,const httpd_uri_t*);
-struct esp_partition_t {size_t size;const char* label;};
+struct esp_partition_t {uint32_t size;const char* label;uint32_t address;};
 using esp_ota_handle_t=unsigned;
 enum esp_ota_img_states_t {ESP_OTA_IMG_NEW,ESP_OTA_IMG_PENDING_VERIFY,ESP_OTA_IMG_VALID,ESP_OTA_IMG_UNDEFINED};
 const esp_partition_t* esp_ota_get_next_update_partition(const esp_partition_t*);

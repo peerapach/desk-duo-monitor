@@ -78,7 +78,9 @@ esp_err_t route(httpd_req_t* request) {
 void portal_init() {
     httpd_config_t settings = HTTPD_DEFAULT_CONFIG();
     settings.stack_size = 12288;
-    settings.max_open_sockets = 4; settings.lru_purge_enable = false;
+    // IDF's LRU excludes for_async_req sessions, so idle clients can be
+    // reclaimed for status/usage without evicting the active upload worker.
+    settings.max_open_sockets = 4; settings.lru_purge_enable = true;
     settings.max_uri_handlers = 8;
     settings.recv_wait_timeout = 1; settings.send_wait_timeout = 2;
     httpd_handle_t server;

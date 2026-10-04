@@ -6,6 +6,7 @@
 #include "cJSON.h"
 #include "lwip/sockets.h"
 #include "esp_ota_ops.h"
+#include "esp_image_format.h"
 #include "esp_system.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -45,6 +46,11 @@ struct Upload {
     }
     bool write(const unsigned char* p,size_t n) { return esp_ota_write(handle,p,n)==ESP_OK; }
     bool end() { return esp_ota_end(handle)==ESP_OK; }
+    size_t image_size() {
+        const esp_partition_pos_t position{target->address,target->size};
+        esp_image_metadata_t image{};
+        return esp_image_verify(ESP_IMAGE_VERIFY,&position,&image)==ESP_OK?image.image_len:0;
+    }
     void abort() { esp_ota_abort(handle); }
     bool select() { return esp_ota_set_boot_partition(target)==ESP_OK; }
 };

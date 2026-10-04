@@ -58,6 +58,7 @@ def main() -> int:
                            str(ROOT / "firmware/main/core.cpp"), str(ROOT / "firmware/main/ota.cpp"), str(ROOT / "firmware/main/portal.cpp"),
                            str(ROOT / "tests/ota_routes_test.cpp"), str(cjson_object), "-o", str(routes)])
     run([str(routes)])
+    run([str(routes), "--idle-capacity"])
     return 0
 
 

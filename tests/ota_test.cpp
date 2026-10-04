@@ -5,15 +5,16 @@
 #include <cstring>
 #include <iostream>
 #include <vector>
+#include "ota_image_fixture.hpp"
 using namespace deskduo;
 struct Device {
-    std::vector<unsigned char> image = std::vector<unsigned char>(8192, 0);
+    std::vector<unsigned char> image = ota_image_fixture();
+    std::vector<unsigned char> flash = image;
     std::vector<unsigned char> written;
     size_t position = 0, chunk = 107;
     uint64_t clock = 0, step = 1;
     int stop = -1, fail = 0, transientTimeouts = 0;
     bool started = false, aborted = false, ended = false, selected = false;
-    Device() { image[0]=0xe9; image[1]=3; image[32]=0x32; image[33]=0x54; image[34]=0xcd; image[35]=0xab; image[29]=1; std::memcpy(image.data()+80,"desk_duo",9); }
     uint64_t now() { return clock; }
     int receive(unsigned char* out, size_t n) {
         clock += step;
@@ -22,9 +23,10 @@ struct Device {
         n=std::min({n, chunk, image.size()-position});
         std::memcpy(out,image.data()+position,n); position+=n; return int(n);
     }
-    bool begin(size_t n) { started=true; return n==image.size() && fail!=1; }
-    bool write(const unsigned char* p,size_t n) { if(fail==2)return false; written.insert(written.end(),p,p+n);return true; }
-    bool end() { ended=true; return fail!=3; }
+    bool begin(size_t n) { started=true; flash.resize(std::max(flash.size(),(n+4095)&~size_t(4095)),0xff); std::fill_n(flash.begin(),(n+4095)&~size_t(4095),0xff);return n==image.size() && fail!=1; }
+    bool write(const unsigned char* p,size_t n) { if(fail==2)return false;std::copy_n(p,n,flash.begin()+written.size()); written.insert(written.end(),p,p+n);return true; }
+    bool end() { ended=true; return fail!=3 && ota_fixture_verified_size(flash)!=0; }
+    size_t image_size() { return ota_fixture_verified_size(flash); }
     void abort() { aborted=true; }
     bool select() { selected=true; return fail!=4; }
 };
@@ -52,5 +54,10 @@ int main() {
     Device total; total.step=2000; assert(stream_update(total,8192)==408 && total.aborted && !total.selected);
     for(int failure:{1,2,3,4}) { Device d; d.fail=failure; assert(stream_update(d,8192)==500); assert(!d.selected || failure==4); if(failure==2)assert(d.aborted); }
     Device retry; retry.chunk=4096; retry.transientTimeouts=3; assert(stream_update(retry,8192)==200);
+    Device retained; const auto original=retained.flash; retained.image.resize(4096);
+    assert(stream_update(retained,4096)==400);
+    assert(retained.ended && !retained.selected && retained.flash==original && retained.written.size()==4096);
+    Device trailing; trailing.image.push_back(0xff);
+    assert(stream_update(trailing,8193)==400 && trailing.ended && !trailing.selected);
     std::cout<<"OTA policy and streaming transaction tests passed\n";
 }

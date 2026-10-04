@@ -82,6 +82,10 @@ template<class IO> int stream_update(IO& io,size_t expected) {
     // freed handle. End's image/checksum validation precedes any boot selection.
     active=false;
     if(!io.end())return 500;
+    // SDK end validates the partition, including bytes retained beyond the
+    // erased upload range. A valid old suffix must never complete a short body.
+    // Metadata length includes image padding/checksum and appended digest.
+    if(io.image_size()!=received)return 400;
     return io.select()?200:500;
 }
 }
