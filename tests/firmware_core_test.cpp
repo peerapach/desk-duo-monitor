@@ -164,6 +164,17 @@ void weatherContract(const std::string& root) {
     const auto simulated = deskduo::parseWeather(readFile(root + "/examples/weather-response.json"), source);
     CHECK(simulated.value.has_value());
     CHECK(simulated.value->hourlyCount == 4U);
+    // forecast_hours=4 at 12:45 returns the current hour plus three more.
+    // Keep corresponding time/temperature/rain entries aligned by index.
+    CHECK(simulated.value->updatedAt == 1791092700LL);
+    CHECK(simulated.value->hourlyTimes[0] == 1791090000LL);
+    CHECK(simulated.value->hourlyTimes[1] == 1791093600LL);
+    CHECK(simulated.value->hourlyTimes[2] == 1791097200LL);
+    CHECK(simulated.value->hourlyTimes[3] == 1791100800LL);
+    CHECK(simulated.value->hourlyTemperatures[0] == 31.2);
+    CHECK(simulated.value->hourlyTemperatures[3] == 29.5);
+    CHECK(simulated.value->hourlyRainProbability[0] == 5);
+    CHECK(simulated.value->hourlyRainProbability[3] == 15);
     CHECK(!deskduo::parseWeather(R"({})", source).value.has_value());
     CHECK(!deskduo::parseWeather(R"({"error":true,"reason":"invalid location"})", source).value.has_value());
     const auto explicitNoError = deskduo::parseWeather(
@@ -239,6 +250,14 @@ void configContract(const std::string& root) {
     CHECK(first.value->weather.fields.at("temperature") == "current.temperature_2m");
     CHECK(first.value->touch.swapAxes);
 
+    // A public patch cannot clear a provisioned secret; omission preserves it.
+    CHECK(!deskduo::applyConfigPatch(*first.value, R"({"usageToken":""})").value.has_value());
+    CHECK(first.value->usageToken == "0123456789abcdef");
+    CHECK(!deskduo::applyConfigPatch(config, R"({"usageToken":""})").value.has_value());
+    const auto unprovisioned = deskduo::parseStoredConfig(deskduo::serializeConfig(config));
+    CHECK(unprovisioned.value.has_value());
+    CHECK(unprovisioned.value->usageToken.empty());
+
     CHECK(!deskduo::applyConfigPatch(config, std::string(8193, ' ')).value.has_value());
     std::string maximumUrl = "https://w.example/";
     maximumUrl += std::string(1020 - maximumUrl.size(), 'a');
@@ -258,6 +277,7 @@ void configContract(const std::string& root) {
     const auto partial = deskduo::applyConfigPatch(*first.value, R"({"weather":{"label":"Forecast"}})");
     CHECK(partial.value.has_value());
     CHECK(partial.value->ssid == "home");
+    CHECK(partial.value->usageToken == "0123456789abcdef");
     CHECK(partial.value->weather.url == first.value->weather.url);
     CHECK(partial.value->weather.label == "Forecast");
 
@@ -433,6 +453,9 @@ int main(int argc, char** argv) {
         CHECK(deskduo::authorized("Bearer usage-secret", true, "secret", "usage-secret"));
         CHECK(!deskduo::authorized("Basic YWRtaW46c2VjcmV0", true, "secret", "usage-secret"));
         CHECK(!deskduo::authorized("Bearer usage-secreu", true, "secret", "usage-secret"));
+        CHECK(!deskduo::authorized("Bearer ", true, "secret", ""));
+        CHECK(!deskduo::authorized("", true, "secret", ""));
+        CHECK(!deskduo::authorized("Bearer usage-secret", true, "secret", ""));
         CHECK(!deskduo::constantEqual("a", std::string("a\0b", 3)));
         CHECK(deskduo::bodyPolicy(4096, "Application/JSON; charset=utf-8", 4096) == 0);
         CHECK(deskduo::bodyPolicy(4097, "application/json", 4096) == 413);

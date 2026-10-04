@@ -812,7 +812,8 @@ bool parseConfigObject(const cJSON* root, Config& config, bool allowSetupPasswor
         } else if (key == "wifiPassword") {
             if (!readString(item, config.wifiPassword) || config.wifiPassword.size() > 64) return false;
         } else if (key == "usageToken") {
-            if (!readString(item, config.usageToken)) return false;
+            // Stored boot defaults may be unprovisioned; public patches may not clear the token.
+            if (!readString(item, config.usageToken, allowSetupPassword)) return false;
         } else if (key == "setupPassword" && allowSetupPassword) {
             if (!readString(item, config.setupPassword)) return false;
         } else if (key == "weather") {

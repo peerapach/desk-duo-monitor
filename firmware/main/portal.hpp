@@ -25,6 +25,7 @@ inline std::string basicCredential(const std::string& password) {
     return out;
 }
 inline bool authorized(const std::string& header, bool usage, const std::string& setup, const std::string& token) {
+    if (usage && token.empty()) return false;
     return constantEqual(header, usage ? "Bearer " + token : basicCredential(setup));
 }
 // Zero means accepted; otherwise an HTTP status. No form POSTs / permissive CORS.

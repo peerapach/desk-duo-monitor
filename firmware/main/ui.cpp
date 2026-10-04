@@ -81,6 +81,14 @@ std::string windowLabel(const std::optional<UsageWindow>& w) {
     if (!w || !w->windowMinutes) return "window --";
     return *w->windowMinutes < 60 ? compactNumber(*w->windowMinutes) + "m" : compactNumber(*w->windowMinutes / 60) + "h";
 }
+std::string tokenLines(const std::string& token) {
+    std::string lines;
+    for(std::size_t i=0;i<token.size();i+=16) {
+        if(i) lines += '\n';
+        lines += token.substr(i,16);
+    }
+    return lines;
+}
 void switchPage(int next);
 void buildPage() {
     if (content) lv_obj_delete(content);
@@ -99,16 +107,11 @@ void buildPage() {
         values[0]=label(content,10,103,220,"LAN: "+station_address());
         label(content,10,128,220,"Usage bearer token:");
         // Explicit local reveal only; never in a render snapshot or GET settings.
-        std::string tokenLines;
-        for(std::size_t i=0;i<cfg.usageToken.size();i+=16) {
-            if(i) tokenLines += '\n';
-            tokenLines += cfg.usageToken.substr(i,16);
-        }
-        auto* token=label(content,10,151,220,tokenLines);
-        lv_obj_set_style_text_font(token,&lv_font_montserrat_12,0);
-        lv_label_set_long_mode(token,LV_LABEL_LONG_WRAP);
-        lv_obj_update_layout(token);
-        label(content,10,161+lv_obj_get_height(token),220,"BOOT: กลับ / เปิดตั้งค่า");
+        values[1]=label(content,10,151,220,tokenLines(cfg.usageToken));
+        lv_obj_set_style_text_font(values[1],&lv_font_montserrat_12,0);
+        lv_label_set_long_mode(values[1],LV_LABEL_LONG_WRAP);
+        lv_obj_update_layout(values[1]);
+        values[2]=label(content,10,161+lv_obj_get_height(values[1]),220,"BOOT: กลับ / เปิดตั้งค่า");
         lv_obj_add_flag(content,LV_OBJ_FLAG_SCROLLABLE);
         return;
     }
@@ -205,7 +208,14 @@ void ui_tick() {
     if(refreshed && now-refreshed<1000)return;
     refreshed=now;
     const auto wall=std::time(nullptr); text(clockLabel,wall<1700000000 ? "--:--" : stamp(wall));
-    if(setup) { text(values[0],"LAN: "+station_address()); return; }
+    if(setup) {
+        text(values[0],"LAN: "+station_address());
+        // Read credentials only while the explicit local reveal is open.
+        text(values[1],tokenLines(runtime_config().config.usageToken));
+        lv_obj_update_layout(values[1]);
+        lv_obj_set_y(values[2],161+lv_obj_get_height(values[1]));
+        return;
+    }
     if(page==0) {
         for(int p=0;p<2;++p) {
             const auto& src=p ? snapshot.codex : snapshot.claude;

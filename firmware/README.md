@@ -16,6 +16,16 @@ rtk proxy node --test tests/stocks_endpoint.test.cjs tests/portal.test.cjs
 rtk proxy .venv/bin/python scripts/package_firmware.py
 ```
 
+ตรวจ UI ด้วย LVGL จริงบน Mac (ใช้ dependencies ที่ target build ดาวน์โหลดแล้ว; ไม่มีการต่อบอร์ด):
+
+```sh
+rtk proxy .platformio/packages/tool-cmake/bin/cmake -S tests/native_ui -B .platformio/native-ui-regression -DCMAKE_BUILD_TYPE=Debug
+rtk proxy .platformio/packages/tool-cmake/bin/cmake --build .platformio/native-ui-regression -j 8
+rtk proxy .platformio/packages/tool-cmake/bin/ctest --test-dir .platformio/native-ui-regression --output-on-failure
+```
+
+UI regression ใช้ runtime/GPIO จำลองและ `ui.cpp` จริง ตรวจ token ที่เปลี่ยนขณะเปิด setup, layout เมื่อความยาวเปลี่ยน และการซ่อน/เปิดใหม่ พร้อมสร้างภาพ PPM ใน build directory
+
 `scripts/pio.py` ใช้ system trust เฉพาะ process ของ build ไม่ปิด TLS verification ไม่เปลี่ยน Python หรือ CA ของระบบ ส่วน `.platformio/`, `firmware/.pio/`, `managed_components/` และ `artifacts/` ไม่ถูก commit; `dependencies.lock` pin component จริง
 
 Package สร้าง `artifacts/desk-duo-cyd.bin`, `.sha256`, `.json`, `desk-duo-app.bin` และ notices ตรวจ offset จาก metadata ของ build, factory partition, ขนาด, SHA256 และเทียบ bytes ของทั้งสามส่วนจริง ไม่มีคำสั่งเข้าถึง serial ใน script นี้
@@ -51,10 +61,12 @@ ESP32 อ่านสองแหล่งเองทีละรายกา�
 ตัวอย่าง Open-Meteo URL สำหรับกรุงเทพฯ (ต้องตั้งเองใน portal; ไม่ได้เรียกในงานนี้):
 
 ```text
-https://api.open-meteo.com/v1/forecast?latitude=13.7563&longitude=100.5018&current=temperature_2m,relative_humidity_2m,weather_code&hourly=temperature_2m,precipitation_probability&forecast_days=1&timezone=Asia%2FBangkok
+https://api.open-meteo.com/v1/forecast?latitude=13.7563&longitude=100.5018&current=temperature_2m,relative_humidity_2m,weather_code&hourly=temperature_2m,precipitation_probability&forecast_hours=4&timezone=Asia%2FBangkok
 ```
 
-Default field mappings อยู่ใน [ตัวอย่าง config](../examples/device-config.example.json) HTTP body จำกัด 16384 bytes; response รายวันใหญ่เกิน cap ต้องลดขอบเขตที่ endpoint (เช่น `forecast_hours=4` ตาม API) ปรับ mapping ได้ใน portal ถ้า JSON ต่างจาก Open-Meteo เวลา local ที่ไม่มี UTC offset จะคง unknown
+ตาม [Open-Meteo API](https://open-meteo.com/en/docs) `forecast_hours=4` เริ่มที่ชั่วโมงปัจจุบันและคืน 4 ช่วงเวลา เช่น เวลา 12:45 ได้ 12:00–15:00; `forecast_days=1` พร้อม timezone เริ่มที่เที่ยงคืน จึงไม่เหมาะกับตัวอย่างนี้ ดู [response จำลอง](../examples/weather-response.json)
+
+Default field mappings อยู่ใน [ตัวอย่าง config](../examples/device-config.example.json) Firmware แสดงสมาชิก 4 ตัวแรกของ mapped hourly arrays ตามลำดับ โดย time/temperature/rain ต้องตรงกันในแต่ละ index และ endpoint ต้องเริ่ม arrays ที่ช่วงเวลาที่ต้องการแสดง Firmware ไม่ค้นหาช่วงเวลาจาก `current.time` ให้อัตโนมัติ HTTP body จำกัด 16384 bytes; ลดขอบเขต response ที่ endpoint หากเกิน cap ปรับ mapping ได้ใน portal ถ้า JSON ต่างจาก Open-Meteo เวลา local ที่ไม่มี UTC offset จะคง unknown
 
 HTTPS ใช้ certificate bundle และตรวจ hostname/SNI ต้องมี SNTP time ก่อนยิง HTTPS ไม่ปิด certificate validation เมื่อเวลาไม่พร้อม UI ใช้ Bangkok timezone, clock แสดง `--:--` เมื่อไม่รู้เวลา จอใช้ข้อมูลจริงหรือ `--`/unknown เท่านั้น อายุ `age` หมายถึงเวลาตั้งแต่รับสำเร็จบนบอร์ด ไม่ได้ยืนยันอายุ quote ใน Sheet; stale แปลว่ารอบล่าสุดล้มเหลวหรือเกินสองช่วง refresh ราคาที่ขาดไม่แทนด้วย 0
 
