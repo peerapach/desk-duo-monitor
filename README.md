@@ -1,6 +1,6 @@
 # ESP32 Desk Duo data feeds
 
-โปรเจกต์นี้มี source สำหรับ endpoint หุ้นจาก Google Sheets และตัวส่ง usage จาก CodexBar app บน Mac ไปยัง ESP32 ขณะนี้ยังไม่มีการ deploy Apps Script หรือ firmware receiver; เครื่องรับ `POST /api/usage` จะทำในงาน firmware ถัดไป จึงยังไม่มีการทดสอบส่งข้อมูลเข้าอุปกรณ์จริง
+โปรเจกต์นี้มี source สำหรับ endpoint หุ้นจาก Google Sheets, ตัวส่ง usage จาก CodexBar app บน Mac และ firmware Desk Duo สำหรับ CYD แนวตั้ง 240×320 พร้อม receiver `POST /api/usage`, portal ตั้งค่า และการอ่านอากาศ/หุ้นตรงจาก ESP32 แล้ว Target build และ native tests ผ่าน; ยังไม่มีการ deploy Apps Script, เปิดใช้ hook, flash หรือทดสอบอุปกรณ์/endpoint จริง ดู [คู่มือ firmware](firmware/README.md) สำหรับ build, package และการตั้งค่า
 
 ## หุ้นจาก Google Sheets
 
@@ -37,14 +37,26 @@ rtk proxy install -m 600 examples/bridge-config.example.json ~/.config/desk-duo/
 
 CodexBar เรียก executable โดยตรง ไม่ผ่าน shell; `arguments` เป็นรายการ argument แยกกัน และ JSON event มาทาง stdin ตามรูปแบบของ app ตัวส่งจะใช้ HTTP `POST /api/usage`, ส่ง `Content-Type: application/json` กับ `Authorization: Bearer …`, ปฏิเสธ redirect และถือว่า status 2xx คือส่งสำเร็จ การส่งล้มเหลวไม่มี retry อัตโนมัติ รายละเอียด field อยู่ใน [protocol](docs/protocol.md)
 
-หลังมี firmware receiver แล้ว สามารถทดสอบ POST ด้วยตัวอย่างที่ normalize แล้ว (แทน host และ token ด้วยค่าจริงจากการตั้งค่าของคุณ):
+หลังติดตั้ง firmware บนอุปกรณ์ในอนาคต สามารถทดสอบ POST ด้วยตัวอย่างที่ normalize แล้ว (แทน host และ token ด้วยค่าจริงจากการตั้งค่าของคุณ):
 
 ```sh
 rtk proxy curl --fail-with-body --request POST \
   --header 'Content-Type: application/json' \
   --header 'Authorization: Bearer REPLACE_WITH_DEVICE_TOKEN' \
   --data-binary @examples/usage-response.json \
-  http://esp32.local/api/usage
+  http://192.168.4.1/api/usage
 ```
 
-sender และ fixtures ไม่ fetch weather หรือหุ้นบน Mac อากาศใช้แหล่งที่ ESP32 ตั้งค่าเอง เช่น Open-Meteo; การตั้งค่าใน firmware เป็นงานถัดไปพร้อมตรวจ display variant และ pin mapping ของบอร์ด ตัว chip ที่ตรวจพบคือ ESP32-D0WD-V3 rev 3.1 พร้อม 4 MiB flash; ข้อมูลนี้ยังไม่ยืนยันทุก revision ของ CYD หรือการต่อขาจอจริง
+sender และ fixtures ไม่ fetch weather หรือหุ้นบน Mac อากาศใช้แหล่งที่ ESP32 ตั้งค่าเอง เช่น Open-Meteo ผ่าน portal Firmware target คือ ESP32-2432S028R / ESP32-D0WD-V3 rev 3.1 พร้อม 4 MiB flash ไม่มี PSRAM ใช้ LCD SPI2 และ touch SPI3 แยกกัน ภาพแนวตั้ง สี และ corner mapping ยังต้องตรวจบนบอร์ดจริง
+
+## ตรวจสอบ source โดยไม่ต่อบอร์ด
+
+```sh
+rtk proxy .venv/bin/python scripts/test_firmware.py
+rtk proxy .venv/bin/python -m unittest discover -s tests -p 'test_*.py' -v
+rtk proxy node --test tests/stocks_endpoint.test.cjs tests/portal.test.cjs
+rtk proxy .venv/bin/python scripts/pio.py run -d firmware -e cyd
+rtk proxy .venv/bin/python scripts/package_firmware.py
+```
+
+ติดตั้ง build dependencies ตาม [firmware guide](firmware/README.md) ก่อน ภาพรวมสำหรับติดตั้งครั้งแรกและ app-only สำหรับอัปเดตอยู่ใน `artifacts/` ที่ไม่ commit; script ตรวจทุก segment/offset/SHA256 โดยไม่ใช้ serial ดู [third-party notices](THIRD_PARTY_NOTICES.md) เมื่อแจก firmware

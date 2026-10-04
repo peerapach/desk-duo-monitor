@@ -1,4 +1,8 @@
 #include "../firmware/main/core.hpp"
+#include "../firmware/main/portal.hpp"
+#include "../firmware/main/network.hpp"
+#include "../firmware/main/assets.hpp"
+#include "../firmware/main/runtime.hpp"
 
 #include <cmath>
 #include <fstream>
@@ -422,6 +426,51 @@ int main(int argc, char** argv) {
     }
     try {
         const std::string root = argv[1];
+        // Removing auth role separation, length caps, sticky header stripping, or
+        // the absolute deadline must fail these public-behaviour regressions.
+        CHECK(deskduo::authorized("Basic YWRtaW46c2VjcmV0", false, "secret", "usage-secret"));
+        CHECK(!deskduo::authorized("Bearer usage-secret", false, "secret", "usage-secret"));
+        CHECK(deskduo::authorized("Bearer usage-secret", true, "secret", "usage-secret"));
+        CHECK(!deskduo::authorized("Basic YWRtaW46c2VjcmV0", true, "secret", "usage-secret"));
+        CHECK(!deskduo::authorized("Bearer usage-secreu", true, "secret", "usage-secret"));
+        CHECK(!deskduo::constantEqual("a", std::string("a\0b", 3)));
+        CHECK(deskduo::bodyPolicy(4096, "Application/JSON; charset=utf-8", 4096) == 0);
+        CHECK(deskduo::bodyPolicy(4097, "application/json", 4096) == 413);
+        CHECK(deskduo::bodyPolicy(1, "text/plain", 8192) == 415);
+        CHECK(deskduo::bodyPolicy(0, "application/json", 8192) == 400);
+        CHECK(deskduo::bodyPolicy(1, "application/jsonp", 8192) == 415);
+        deskduo::FetchPolicy fetch("https://one.test/start", 100);
+        CHECK(fetch.remaining(100) == 10000);
+        CHECK(fetch.remaining(10099) == 1);
+        CHECK(fetch.remaining(10100) == 0);
+        CHECK(fetch.append(16384));
+        CHECK(!fetch.append(1));
+        CHECK(fetch.redirect("https://one.test/next"));
+        CHECK(fetch.sendHeaders);
+        CHECK(fetch.redirect("https://two.test/next"));
+        CHECK(!fetch.sendHeaders);
+        CHECK(fetch.redirect("https://one.test/back"));
+        CHECK(!fetch.sendHeaders);
+        CHECK(fetch.redirect("https://one.test/four"));
+        CHECK(!fetch.redirect("https://one.test/five"));
+        deskduo::FetchPolicy downgrade("https://one.test", 0);
+        CHECK(!downgrade.redirect("http://one.test"));
+        CHECK(downgrade.url == "https://one.test");
+        CHECK(deskduo::shapeText("ปิ๊") == "ป\uf701\uf714");
+        CHECK(deskduo::shapeText("ญุ") == "ญ\uf717");
+        CHECK(deskduo::shapeText("กิ่") == "กิ\uf70d");
+        CHECK(deskduo::shapeText("Claude 32% หุ้น") == "Claude 32% หุ้น");
+        CHECK(deskduo::shapeText("☃") == "?");
+        CHECK(deskduo::compactNumber(1e300).size() < 16);
+        CHECK(deskduo::compactNumber(-1e300).size() < 16);
+        CHECK(deskduo::compactNumber(12.5) == "12.50");
+        auto intended = deskduo::defaultConfig();
+        intended.ssid = "private-wifi";
+        intended.wifiPassword = "private-password";
+        intended.usageToken = "0123456789abcdef0123456789abcdef";
+        CHECK(!deskduo::completeSerialization(intended, "{}"));
+        CHECK(!deskduo::completeSerialization(intended, ""));
+        CHECK(deskduo::completeSerialization(intended, deskduo::serializeConfig(intended)));
         usageContract(root);
         stocksContract(root);
         weatherContract(root);

@@ -9,3 +9,8 @@ __pycache__/
 build/
 .device-backups/
 .platformio/
+
+artifacts/
+firmware/managed_components/
+firmware/sdkconfig.cyd
+firmware/sdkconfig.cyd.old

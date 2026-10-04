@@ -54,3 +54,15 @@ The sender supports `--dry-run`, which reads and validates the event and prints 
 ## Independent feeds
 
 The Mac sends usage only. Weather is fetched by the ESP32 from its configured source; stocks are fetched independently from the Google Sheets endpoint described in the [Sheets guide](../integrations/google-sheets/README.md), with the [stocks response fixture](../examples/stocks-response.json) as its example. Neither feed passes through CodexBar or this sender.
+
+## Device receiver and configuration portal
+
+The built firmware implements `POST /api/usage`: a separate `Authorization: Bearer <usageToken>` and `Content-Type: application/json` are required. Valid usage is 204; wrong credentials are 401; invalid JSON/schema is 400; a body over 4096 bytes is 413; a different content type is 415. An absent primary or secondary window stays absent. Older updates cannot overwrite newer provider data. `windowMinutes` is any positive finite number, including fractional minutes.
+
+`GET /`, `GET /api/config`, and `POST /api/config` require HTTP Basic username `admin` with the device's randomly generated setup/AP password. A usage bearer does not grant settings access, and Basic does not grant usage ingestion. POST configuration requires JSON and at most 8192 bytes. Omitted fields remain unchanged. Config is validated, serialized, restored and compared across every field, then committed as an NVS blob before atomic application (88 KiB NVS allows old/new bounded payloads during replacement); persistence failure returns503 without changing active state. Internal saved JSON may use up to32768 bytes because validated field contents can require JSON escaping.
+
+GET configuration uses the core redacted representation: no SSID, Wi-Fi password, setup password, usage token or headers; URL queries/fragments are removed. Portal secret/URL/SSID inputs remain blank and are omitted on an unchanged save. Explicit clear controls remove Wi-Fi credentials or source URLs, while an entered empty headers object clears headers. No permissive CORS headers are provided.
+
+Device sources have a single 10-second total budget including asynchronous DNS, nonblocking connect/TLS, headers, body and up to4 redirect hops. Responses are at most16384 decoded body bytes; headers/chunk framing are additionally bounded by32768 wire bytes per hop. Configured headers are permanently removed after any cross-origin redirect, and HTTPS downgrade is rejected. Verified certificate bundle/hostname checks remain enabled; HTTPS waits for valid SNTP time. Root-relative redirects are resolved; other relative forms are rejected conservatively. Failures retain same-source data as stale; source changes reset that cache to unknown and invalidate old generations.
+
+The UI uses Bangkok time and displays unknown time when SNTP has not established a usable clock. Display age is monotonic receipt age, not proof of a current Sheet quote. Mac usage and ESP32 weather/stocks remain independent. These receiver paths have target-build and portable-policy verification; device/network integration remains pending.
