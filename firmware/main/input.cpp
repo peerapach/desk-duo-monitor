@@ -41,6 +41,9 @@ void input_init() {
     ESP_ERROR_CHECK(spi_bus_add_device(SPI3_HOST, &dev, &touch));
     gpio_config_t pins{}; pins.pin_bit_mask = (1ULL << 36) | 1; pins.mode = GPIO_MODE_INPUT;
     ESP_ERROR_CHECK(gpio_config(&pins)); gpio_set_pull_mode(GPIO_NUM_0, GPIO_PULLUP_ONLY);
+    // ESP-IDF initializes a static pthread mutex lazily on first lock.
+    // Warm it at startup so the polling callback never allocates its mutex.
+    (void)diagnostics.snapshot();
     auto* input = lv_indev_create(); lv_indev_set_type(input,LV_INDEV_TYPE_POINTER);
     lv_indev_set_read_cb(input, [](lv_indev_t*, lv_indev_data_t* d) {
         static int x = 0, y = 0; static unsigned pressed = 0;
