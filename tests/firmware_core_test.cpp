@@ -161,6 +161,18 @@ void configContract(const std::string& root) {
     CHECK(config.autoRotateSeconds == 20U);
     CHECK(config.weather.label == "Weather");
     CHECK(config.weather.fields.at("temperature") == "current.temperature_2m");
+    CHECK(deskduo::applyConfigPatch(config, R"({"weather":{"refreshSeconds":30}})").value.has_value());
+    CHECK(deskduo::applyConfigPatch(config, R"({"stocks":{"refreshSeconds":86400}})").value.has_value());
+    CHECK(!deskduo::applyConfigPatch(config, R"({"weather":{"refreshSeconds":29}})").value.has_value());
+    CHECK(!deskduo::applyConfigPatch(config, R"({"stocks":{"refreshSeconds":86401}})").value.has_value());
+    CHECK(!deskduo::applyConfigPatch(config, R"({"weather":{"refreshSeconds":30.5}})").value.has_value());
+    CHECK(deskduo::applyConfigPatch(config, R"({"autoRotateSeconds":0})").value.has_value());
+    CHECK(deskduo::applyConfigPatch(config, R"({"autoRotateSeconds":5})").value.has_value());
+    CHECK(deskduo::applyConfigPatch(config, R"({"autoRotateSeconds":300})").value.has_value());
+    CHECK(!deskduo::applyConfigPatch(config, R"({"autoRotateSeconds":1})").value.has_value());
+    CHECK(!deskduo::applyConfigPatch(config, R"({"autoRotateSeconds":2})").value.has_value());
+    CHECK(!deskduo::applyConfigPatch(config, R"({"autoRotateSeconds":301})").value.has_value());
+    CHECK(!deskduo::applyConfigPatch(config, R"({"autoRotateSeconds":5.5})").value.has_value());
     const auto example = deskduo::applyConfigPatch(config, readFile(root + "/examples/device-config.example.json"));
     CHECK(example.value.has_value());
     CHECK(example.value->weather.url.empty());

@@ -26,10 +26,10 @@ constexpr std::size_t kMaximumHeaderNameLength = 64;
 constexpr std::size_t kMaximumHeaderValueLength = 256;
 constexpr std::size_t kMaximumMappingLength = 128;
 constexpr std::size_t kMaximumFieldCount = 8;
-constexpr uint32_t kMinimumRefreshSeconds = 60;
+constexpr uint32_t kMinimumRefreshSeconds = 30;
 constexpr uint32_t kMaximumRefreshSeconds = 86400;
-constexpr uint32_t kMinimumRotationSeconds = 2;
-constexpr uint32_t kMaximumRotationSeconds = 3600;
+constexpr uint32_t kMinimumRotationSeconds = 5;
+constexpr uint32_t kMaximumRotationSeconds = 300;
 
 using JsonPointer = std::unique_ptr<cJSON, decltype(&cJSON_Delete)>;
 
@@ -652,7 +652,8 @@ bool validateConfig(const Config& config) {
         (config.usageToken.size() < 16 || config.usageToken.size() > 128 || !printableAscii(config.usageToken, false))) return false;
     if (!config.setupPassword.empty() &&
         (config.setupPassword.size() < 8 || config.setupPassword.size() > 64 || !printableAscii(config.setupPassword, true))) return false;
-    if (config.autoRotateSeconds < kMinimumRotationSeconds || config.autoRotateSeconds > kMaximumRotationSeconds) return false;
+    if (config.autoRotateSeconds != 0 &&
+        (config.autoRotateSeconds < kMinimumRotationSeconds || config.autoRotateSeconds > kMaximumRotationSeconds)) return false;
     if (config.touch.minX < 0 || config.touch.minX > 4095 || config.touch.maxX < 0 || config.touch.maxX > 4095 ||
         config.touch.minY < 0 || config.touch.minY > 4095 || config.touch.maxY < 0 || config.touch.maxY > 4095 ||
         config.touch.minX >= config.touch.maxX || config.touch.minY >= config.touch.maxY) return false;
@@ -752,7 +753,7 @@ bool parseConfigObject(const cJSON* root, Config& config, bool allowSetupPasswor
             if (!parseSourcePatch(item, config.stocks, false)) return false;
         } else if (key == "autoRotateSeconds") {
             int64_t seconds = 0;
-            if (!readInteger(item, kMinimumRotationSeconds, kMaximumRotationSeconds, seconds)) return false;
+            if (!readInteger(item, 0, kMaximumRotationSeconds, seconds)) return false;
             config.autoRotateSeconds = static_cast<uint32_t>(seconds);
         } else if (key == "touch") {
             if (!parseTouchPatch(item, config.touch)) return false;
