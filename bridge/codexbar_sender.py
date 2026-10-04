@@ -5,8 +5,11 @@ import argparse
 import json
 import math
 import multiprocessing
+import os
 import re
+import select
 import signal
+import struct
 import sys
 import time
 import urllib.error
@@ -207,8 +210,11 @@ def _deliver_in_worker(control_pipe):
     """Perform the blocking part in a killable process so progress cannot extend the deadline."""
     delivered = False
     try:
-        endpoint, token, body, deadline = control_pipe.recv()
-        timeout = deadline - time.monotonic()
+        request_data = json.loads(control_pipe.recv_bytes().decode("utf-8"))
+        endpoint = request_data["endpoint"]
+        token = request_data["bearerToken"]
+        body = request_data["body"].encode("utf-8")
+        timeout = request_data["timeoutSeconds"]
         if timeout > 0:
             request = urllib.request.Request(
                 endpoint,
@@ -255,6 +261,51 @@ def _stop_worker(process):
         pass
 
 
+def _worker_request_bytes(endpoint, token, body, timeout_seconds):
+    return json.dumps({
+        "endpoint": endpoint,
+        "bearerToken": token,
+        "body": body.decode("utf-8"),
+        "timeoutSeconds": timeout_seconds,
+    }, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode("utf-8")
+
+
+def _send_pipe_frame_before(connection, payload, deadline):
+    """Send one Connection.recv_bytes frame using deadline-aware nonblocking writes."""
+    if len(payload) > 0x7FFFFFFF:
+        return False
+    frame = memoryview(struct.pack("!i", len(payload)) + payload)
+    descriptor = connection.fileno()
+    was_blocking = os.get_blocking(descriptor)
+    try:
+        os.set_blocking(descriptor, False)
+        while frame:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            try:
+                _, writable, _ = select.select([], [descriptor], [], remaining)
+            except InterruptedError:
+                continue
+            if not writable:
+                return False
+            try:
+                written = os.write(descriptor, frame)
+            except (BlockingIOError, InterruptedError):
+                continue
+            except OSError:
+                return False
+            if written <= 0:
+                return False
+            frame = frame[written:]
+        return time.monotonic() <= deadline
+    finally:
+        try:
+            os.set_blocking(descriptor, was_blocking)
+        except OSError:
+            pass
+
+
 def send_usage(payload, config):
     """POST one normalized payload with a total wall-clock deadline."""
     validated = _validated_config(config)
@@ -280,9 +331,17 @@ def send_usage(payload, config):
         child_pipe.close()
         remaining = deadline - time.monotonic()
         if remaining > 0:
-            parent_pipe.send((validated["endpoint"], validated["bearerToken"], body, deadline))
+            request_data = _worker_request_bytes(
+                validated["endpoint"],
+                validated["bearerToken"],
+                body,
+                validated["timeoutSeconds"],
+            )
+            transferred = _send_pipe_frame_before(parent_pipe, request_data, deadline)
             remaining = deadline - time.monotonic()
-        if remaining > 0 and parent_pipe.poll(remaining):
+        else:
+            transferred = False
+        if transferred and remaining > 0 and parent_pipe.poll(remaining):
             delivered = parent_pipe.recv() is True and time.monotonic() <= deadline
     except Exception:
         delivered = False

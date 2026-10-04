@@ -217,3 +217,66 @@ OK
 The sender now performs blocking HTTP work in a `spawn` worker process and starts a monotonic deadline before worker launch. The parent supplies request data over a private multiprocessing pipe after launch; the bearer token is absent from worker process arguments and is never logged. The parent accepts a result only by the deadline, then terminates and reaps the worker on timeout. The CLI entrypoint temporarily handles SIGTERM/SIGINT so cancellation unwinds through that cleanup; it restores the prior handlers before exit. Library calls do not install process-global signal handlers. README now declares Python 3.9+ and the hook example points to the available `/usr/local/bin/python3` (3.12.8); Python 3.9.6 was also exercised.
 
 Only the sender, its tests, README, hook example, and this report are in the Task 2 fix set. The worktree's unrelated `.gitignore` and design-spec edits were left unstaged. The sender still has no live receiver firmware or physical-device verification; loopback fixtures are the only transport targets used.
+
+## Review round 2/5: deadline-safe request transfer
+
+`send_usage` no longer calls blocking `Connection.send()` for the request. It encodes the request as UTF-8 JSON, frames it in the format consumed by `Connection.recv_bytes()`, then writes through a nonblocking descriptor. Each partial write waits with `select` only for the remaining parent monotonic deadline. The parent uses that same clock for both transfer and result acceptance; the worker uses only the configured socket timeout, so it does not compare monotonic readings across processes. If transfer or response exceeds the deadline, the parent closes the pipe and terminates/reaps the worker. The CLI-only signal cleanup from round 1 remains in place.
+
+No new configuration size cap was added: the regression keeps a valid 1 MiB bearer token, and the transfer mechanism itself must stop waiting when the held reader does not drain the pipe. The token is sent through the private pipe after worker launch, never through process arguments or logs. The local-only regression does not connect to its placeholder loopback endpoint.
+
+### RED evidence
+
+The held-reader regression was first run before the nonblocking transfer implementation, with a valid 1 MiB token, a 0.1-second timeout, and a real spawned worker that slept for two seconds without reading its pipe:
+
+```text
+rtk proxy /usr/local/bin/python3 -m unittest tests.test_codexbar_sender.DeliveryTests.test_ipc_transfer_obeys_deadline_with_held_reader_and_one_mib_token -v
+```
+
+Observed: **FAILED**. The measured sender duration was `2.262213416979648` seconds and failed `request IPC blocked past its monotonic deadline` (`not less than 0.8`). The worker exited and was reaped after closing the pipe.
+
+### GREEN evidence
+
+The final regression uses a 0.5-second budget so the spawned held-reader is confirmed running before the deadline, asserts the transfer phase was entered, and still keeps the same two-second hold and valid 1 MiB token:
+
+```text
+rtk proxy /usr/local/bin/python3 -m unittest tests.test_codexbar_sender.DeliveryTests.test_ipc_transfer_obeys_deadline_with_held_reader_and_one_mib_token -v
+```
+
+```text
+Ran 1 test in 0.568s
+
+OK
+```
+
+Real loopback delivery, 204 success, and redirect rejection were also checked after changing the wire framing:
+
+```text
+rtk proxy /usr/local/bin/python3 -m unittest tests.test_codexbar_sender.DeliveryTests.test_posts_json_to_receiver_with_expected_path_and_bearer_header tests.test_codexbar_sender.DeliveryTests.test_accepts_http_204_as_success tests.test_codexbar_sender.DeliveryTests.test_redirect_is_rejected_before_destination_receives_bearer_request -v
+
+Ran 3 tests in 2.351s
+
+OK
+```
+
+### Final suite output
+
+```text
+rtk proxy /usr/bin/python3 -m unittest discover -s tests -p 'test_*.py' -v
+Python 3.9.6: Ran 36 tests in 6.752s
+OK
+
+rtk proxy /usr/local/bin/python3 -m unittest discover -s tests -p 'test_*.py' -v
+Python 3.12.8: Ran 36 tests in 6.543s
+OK
+
+rtk proxy /Users/peerapach.v/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node --test tests/stocks_endpoint.test.cjs
+ℹ tests 35
+ℹ pass 35
+ℹ fail 0
+```
+
+The Python suites cover the held-reader transfer, slow response headers, successful loopback POST, receiver rejection, redirect destination isolation, timeout, and SIGTERM cleanup. The Node suite remains green. Local HTTP fixtures bind only to `127.0.0.1`; the held-reader IPC test performs no socket request. `rtk git diff --check` was clean before report append.
+
+### Round 2 self-review
+
+The deadline wait no longer surrounds a blocking request write: the request transfer itself is incremental and nonblocking, and the parent checks remaining time before each wait/write and after the final byte. Partial frames are abandoned only as the parent closes the pipe and terminates the worker, so the child cannot continue network activity. Response status IPC remains a single small boolean frame. The deadline path and status check use only the parent process's monotonic clock. The library adds no signal handler or other process-global signal change; cancellation is still handled and restored only by `_cli_entrypoint`. The held-reader test confirms prompt return and zero active child processes. No live service, device, or remote endpoint was contacted.

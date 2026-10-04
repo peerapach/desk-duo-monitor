@@ -1,4 +1,5 @@
 import contextlib
+import functools
 import io
 import json
 import math
@@ -174,6 +175,12 @@ class SlowHeaderReceiver:
 
 def set_stdin(data):
     return patch("sys.stdin", io.TextIOWrapper(io.BytesIO(data), encoding="utf-8"))
+
+
+def _hold_pipe_without_reading(connection, ready_event):
+    ready_event.set()
+    time.sleep(2)
+    connection.close()
 
 
 class SenderTestCase(unittest.TestCase):
@@ -514,6 +521,35 @@ class DeliveryTests(SenderTestCase):
 
         leaked = [process for process in multiprocessing.active_children() if process.pid not in before]
         self.assertEqual(leaked, [], "sender left a transport worker process running")
+
+    def test_ipc_transfer_obeys_deadline_with_held_reader_and_one_mib_token(self):
+        before = {process.pid for process in multiprocessing.active_children()}
+        ready_event = multiprocessing.get_context("spawn").Event()
+        large_config = {
+            "endpoint": "http://127.0.0.1:1/api/usage",
+            "bearerToken": "x" * (1024 * 1024),
+            "timeoutSeconds": 0.5,
+        }
+        started = time.monotonic()
+        transfer_started = threading.Event()
+        holding_worker = functools.partial(_hold_pipe_without_reading, ready_event=ready_event)
+        send_frame = sender._send_pipe_frame_before
+
+        def track_transfer(connection, payload, deadline):
+            transfer_started.set()
+            return send_frame(connection, payload, deadline)
+
+        with patch.object(sender, "_deliver_in_worker", holding_worker), \
+                patch.object(sender, "_send_pipe_frame_before", track_transfer):
+            with self.assertRaises(DeliveryError):
+                send_usage(PAYLOAD, large_config)
+        elapsed = time.monotonic() - started
+
+        self.assertTrue(ready_event.is_set(), "the held-reader worker did not start")
+        self.assertTrue(transfer_started.is_set(), "the sender skipped the request-transfer phase")
+        self.assertLess(elapsed, 1.2, "request IPC blocked past its monotonic deadline")
+        leaked = [process for process in multiprocessing.active_children() if process.pid not in before]
+        self.assertEqual(leaked, [], "deadline failure left the held-reader worker alive")
 
     def test_sigterm_cancels_cli_and_closes_worker_transport(self):
         script = Path(__file__).parents[1] / "bridge" / "codexbar_sender.py"
