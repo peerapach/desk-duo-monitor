@@ -24,7 +24,7 @@ rtk proxy .platformio/packages/tool-cmake/bin/cmake --build .platformio/native-u
 rtk proxy .platformio/packages/tool-cmake/bin/ctest --test-dir .platformio/native-ui-regression --output-on-failure
 ```
 
-UI regression ใช้ runtime/GPIO จำลองและ `ui.cpp` จริง ตรวจ token ที่เปลี่ยนขณะเปิด setup, layout เมื่อความยาวเปลี่ยน และการซ่อน/เปิดใหม่ พร้อมสร้างภาพ PPM ใน build directory
+UI regression ใช้ runtime/GPIO จำลองและ `ui.cpp` จริง ตรวจปุ่มท้ายจอทั้งสี่, LAN IP, token ที่เปลี่ยนขณะเปิด setup, layout/scroll เมื่อความยาวเปลี่ยน, การซ่อน/เปิดใหม่, usage window ที่มีเศษนาที, reset ปี 2100, auto rotation ที่ข้าม Setup และหยุด 15 วินาทีหลังแตะ พร้อมสร้างภาพ PPM ใน build directory
 
 `scripts/pio.py` ใช้ system trust เฉพาะ process ของ build ไม่ปิด TLS verification ไม่เปลี่ยน Python หรือ CA ของระบบ ส่วน `.platformio/`, `firmware/.pio/`, `managed_components/` และ `artifacts/` ไม่ถูก commit; `dependencies.lock` pin component จริง
 
@@ -72,7 +72,9 @@ HTTPS ใช้ certificate bundle และตรวจ hostname/SNI ต้อ�
 
 ## หน้าจอและข้อจำกัดที่ต้องตรวจบนฮาร์ดแวร์
 
-หน้าแรก Claude อยู่บน Codex อยู่ล่าง แต่ละตัวมี usage primary/secondary และ reset ของตนเอง ตัวละคร loop ตลอดโดยไม่แสดงสถานะ working/idle ของ agent หน้าอากาศมีค่าปัจจุบันและ 4 forecast slots หน้าหุ้นแสดงครั้งละ 3 รายการ ถ้ามี 4–5 รายการจะสลับกลุ่มทุก 6 วินาที ทั้งสองหน้ามี mini characters ปัดซ้าย/ขวาหรือแตะแท็บเปลี่ยนหน้า
+Pocket Studio ใช้พื้นหลังดำบนจอ 240×320: header 24px, content 232px, LAN IP ที่ y=256 และปุ่ม คู่หู/อากาศ/หุ้น/ตั้งค่า ขนาด 60×44 ที่ y=276 หน้าแรก Claude อยู่บน Codex อยู่ล่าง แต่ละตัวมี usage primary/secondary และ reset ของตนเอง แสดง window ตามจำนวนนาทีจริง (รวมเศษนาที) และ unknown/stale แยกกัน ตัวละครขยับหายใจเพียง 1px โดยไม่แสดงสถานะ working/idle ของ agent หน้าอากาศมีค่าปัจจุบันและ 4 forecast slots จากตัวเลขจริง ไม่มีภาพ radar จำลอง หน้าหุ้นแสดงครั้งละ 3 รายการ ถ้ามี 4–5 รายการจะสลับกลุ่มทุก 6 วินาที ราคาใช้ฟอนต์ 18px และ currency แยกจากราคา ยังแสดง label, changePercent และ quote timestamp ทั้งสองหน้ามี mini characters ปัดซ้าย/ขวาหรือแตะปุ่มท้ายจอเปลี่ยนหน้า Auto rotation ข้าม Setup และเว้นอย่างน้อย 15 วินาทีหลังเลือกหน้าเอง Setup แสดง credentials เฉพาะหน้าเปิดในเครื่องและเลื่อนภายใน content โดยไม่ทับปุ่มท้ายจอ
+
+ตัวละครมาจาก [source PNG และ recipe](assets/README.md) ที่สร้างจาก concept ที่ผู้ใช้อนุมัติ ไม่ใช้ ASCII sprites ใน UI แล้ว Compiled RGB565 64×64/32×32 รวม 20,480 bytes อยู่ใน flash; firmware ไม่ decode PNG เต็มภาพ ฟอนต์ Montserrat 18/32 เปิดเหมือนกันใน target และ native preview
 
 LCD: SPI2 MOSI13 MISO12 CLK14 CS15 DC2 BL21, 40MHz, RGB565, partial buffer 240×24×2 bytes เพียงก้อนเดียว ไม่มี full-screen buffer ซ้ำ Touch XPT2046: SPI3 CLK25 MOSI32 MISO39 CS33 IRQ36, 1MHz; ใช้ median samples และ config `touch` สำหรับ swapAxes/invertX/invertY/minX/maxX/minY/maxY
 
