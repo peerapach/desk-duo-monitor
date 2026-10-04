@@ -50,6 +50,10 @@ def main() -> int:
                            str(ROOT / "firmware/main/core.cpp"), str(ROOT / "tests/firmware_core_test.cpp"),
                            str(cjson_object), "-o", str(test_binary)])
     run([str(test_binary), str(ROOT)])
+    touch = output / "touch_diagnostics_test"
+    run(compiler("c++") + ["-std=c++17", "-Wall", "-Wextra", "-Werror", "-I", str(sdk),
+                           str(ROOT / "tests/touch_diagnostics_test.cpp"), str(cjson_object), "-o", str(touch)])
+    run([str(touch)])
     ota = output / "ota_test"
     run(compiler("c++") + ["-std=c++17", "-Wall", "-Wextra", "-Werror", "-I", str(sdk), str(ROOT / "firmware/main/core.cpp"), str(ROOT / "tests/ota_test.cpp"), str(cjson_object), "-o", str(ota)])
     run([str(ota)])

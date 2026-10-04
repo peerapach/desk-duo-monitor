@@ -9,6 +9,7 @@
 #include <cstring>
 #include <cstdlib>
 #include <ctime>
+#include <array>
 int buttonLevel=1;
 uint64_t clockMs=2000;
 namespace deskduo {
@@ -48,6 +49,14 @@ void tapTab(const char* name){
     assert(navArea.y1==276 && navArea.y2==319 && navArea.x2-navArea.x1+1==60);
     assert(ipArea.y1>=256 && ipArea.y2<276);
 }
+int pointerX=0, pointerY=0;
+lv_indev_state_t pointerState=LV_INDEV_STATE_RELEASED;
+lv_indev_t* fakePointer=nullptr;
+void pointerTapAt(int x,int y){
+    pointerX=x; pointerY=y; pointerState=LV_INDEV_STATE_PRESSED; lv_indev_read(fakePointer);
+    pointerState=LV_INDEV_STATE_RELEASED; lv_indev_read(fakePointer);
+    deskduo::ui_tick();
+}
 int main(){
     setenv("TZ","Asia/Bangkok",1);tzset();
     lv_init();lv_tick_set_cb([]()->uint32_t{return clockMs;});
@@ -68,7 +77,38 @@ int main(){
         }
     }
     deskduo::cfg.ssid="SIMULATED";deskduo::cfg.setupPassword="DEMO-password";deskduo::cfg.usageToken="0123456789abcdef0123456789abcdef";
-    deskduo::ui_init();capture("unknown.ppm");
+    fakePointer=lv_indev_create();
+    lv_indev_set_type(fakePointer,LV_INDEV_TYPE_POINTER);
+    lv_indev_set_read_cb(fakePointer,[](lv_indev_t*,lv_indev_data_t* d){d->point.x=pointerX;d->point.y=pointerY;d->state=pointerState;});
+    deskduo::ui_init();
+    auto* navScreen=lv_screen_active();
+    lv_obj_update_layout(navScreen);
+    const char* navNames[]={"คู่หู","อากาศ","หุ้น","ตั้งค่า"};
+    std::array<unsigned,4> pointerClicks{};
+    for(int i=0;i<4;++i){
+        auto shaped=deskduo::shapeText(navNames[i]);
+        auto* caption=findLabel(navScreen,shaped.c_str()); assert(caption);
+        auto* button=lv_obj_get_parent(caption); assert(button);
+        lv_obj_add_event_cb(button,[](lv_event_t* e){++*static_cast<unsigned*>(lv_event_get_user_data(e));},LV_EVENT_CLICKED,&pointerClicks[i]);
+        lv_area_t b{},c{};lv_obj_get_coords(button,&b);lv_obj_get_coords(caption,&c);
+        assert(b.x1==i*60 && b.x2==i*60+59 && b.y1==276 && b.y2==319);
+        const int upperX=i*60+1, lowerX=i*60+58;
+        assert(277<c.y1 || 277>c.y2); pointerTapAt(upperX,277);
+        assert(pointerClicks[i]==1 && "real LVGL pointer must click upper blank button padding");
+        assert(!lv_obj_has_flag(caption,LV_OBJ_FLAG_CLICKABLE)); pointerTapAt(lowerX,318);
+        assert(pointerClicks[i]==2 && "real LVGL pointer must click lower blank button padding");
+        pointerTapAt(i*60+30,284);
+        assert(pointerClicks[i]==3 && "real LVGL pointer must click icon area");
+        pointerTapAt((c.x1+c.x2)/2,(c.y1+c.y2)/2);
+        assert(pointerClicks[i]==4 && "real LVGL pointer must click caption area");
+        const char* pageMarkers[]={"Claude","--°C","หุ้น / Watchlist","ตั้งค่า Pocket Studio"};
+        assert(findLabel(navScreen,deskduo::shapeText(pageMarkers[i]).c_str()) && "pointer clicks must select the requested page");
+    }
+    pointerTapAt(30,284);
+    std::cout<<"LVGL pointer hit actual ui.cpp nav: each 60x44 button accepted top/bottom blank padding, icon, and caption; counts=";
+    for(auto n:pointerClicks) std::cout<<n<<",";
+    std::cout<<"\n";
+    capture("unknown.ppm");
     tapTab("ตั้งค่า");
     assert(findLabel(lv_screen_active(),"0123456789abcdef\n0123456789abcdef"));
     for(const char* tab:{"คู่หู","อากาศ","หุ้น"}) {

@@ -1,6 +1,7 @@
 #include "../firmware/main/ota.hpp"
 #include "../firmware/main/ota_policy.hpp"
 #include "../firmware/main/portal.hpp"
+#include "../firmware/main/input.hpp"
 #include "../firmware/main/runtime.hpp"
 #include <cstring>
 #include <iostream>
@@ -70,10 +71,21 @@ RequestConfig runtime_config(){auto c=defaultConfig();c.setupPassword="test-admi
 int runtime_patch(const std::string&){++patches;return 204;}
 void runtime_usage(const Usage&){++usage;}
 uint64_t now_ms(){return clockMs;}
+std::string input_diagnostics_json(){return R"({"sequence":19,"lastPollTimeMs":20,"lastPressure":0,"pressureAccepted":false,"samples":[{"sequence":18,"timeMs":19,"rawX":123,"rawY":456,"pressure":200,"x":7,"y":8}]})";}
 }
 int main(int argc,char**){
     using namespace deskduo;
-    portal_init();assert(routes.size()==6);
+    portal_init();assert(routes.size()==7);
+    assert(routes.count({"/api/touch",HTTP_GET}) && !routes.count({"/api/touch",HTTP_POST}));
+    for(auto credential:{"","Bearer test-usage-token-123","Basic wrong"}) {
+        auto e=exchange();e.headers["Authorization"]=credential;auto r=request(e,"/api/touch",HTTP_GET);
+        assert(dispatch(r)==ESP_FAIL && e.status=="401 Unauthorized" && e.reads==0);
+    }
+    {auto e=exchange();auto r=request(e,"/api/touch",HTTP_GET);
+     assert(dispatch(r)==ESP_OK && e.status=="200 OK" && e.reads==0);
+     assert(e.response==R"({"sequence":19,"lastPollTimeMs":20,"lastPressure":0,"pressureAccepted":false,"samples":[{"sequence":18,"timeMs":19,"rawX":123,"rawY":456,"pressure":200,"x":7,"y":8}]})");
+     assert(patches==0 && usage==0);}
+
     if(argc>1) {
         auto active=exchange();Exchange idle1,idle2,idle3;auto status=exchange(),usageClient=exchange();
         assert(acceptConnection(active));auto r=request(active);assert(dispatch(r)==ESP_OK);

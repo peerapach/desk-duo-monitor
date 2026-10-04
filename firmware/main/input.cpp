@@ -1,4 +1,5 @@
 #include "input.hpp"
+#include "touch_diagnostics.hpp"
 #include "runtime.hpp"
 #include "driver/gpio.h"
 #include "driver/spi_master.h"
@@ -7,6 +8,7 @@
 namespace deskduo {
 namespace {
 spi_device_handle_t touch;
+TouchDiagnostics diagnostics;
 int readRaw(uint8_t command) {
     uint8_t tx[3] = {command,0,0}, rx[3]{};
     spi_transaction_t t{}; t.length = 24; t.rxlength = 24; t.tx_buffer = tx; t.rx_buffer = rx;
@@ -17,9 +19,19 @@ int median(uint8_t cmd) { int values[] = {readRaw(cmd),readRaw(cmd),readRaw(cmd)
 }
 bool input_read(int& x, int& y) {
     const int z = median(0xB0);
-    if (z < 100 || z > 3000) return false;
-    auto point = mapTouch(median(0xD0), median(0x90), runtime_config().config.touch);
-    x = point.first; y = point.second; return true;
+    if (z < 100 || z > 3000) {
+        diagnostics.poll(now_ms(),z,false);
+        return false;
+    }
+    int rawX=0, rawY=0;
+    auto capture=[](uint8_t command, int& raw) { raw=median(command); return raw; };
+    auto point = mapTouch(capture(0xD0,rawX), capture(0x90,rawY), runtime_config().config.touch);
+    x = point.first; y = point.second;
+    diagnostics.poll(now_ms(),z,true,rawX,rawY,x,y);
+    return true;
+}
+std::string input_diagnostics_json() {
+    return touchDiagnosticsJson(diagnostics.snapshot());
 }
 void input_init() {
     spi_bus_config_t bus{}; bus.mosi_io_num = 32; bus.miso_io_num = 39; bus.sclk_io_num = 25;

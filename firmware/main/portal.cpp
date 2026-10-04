@@ -1,4 +1,5 @@
 #include "portal.hpp"
+#include "input.hpp"
 #include "runtime.hpp"
 #include "assets.hpp"
 #include "ota.hpp"
@@ -48,6 +49,7 @@ esp_err_t route(httpd_req_t* request) {
             return respond(request, 200, portal_html);
         }
         httpd_resp_set_type(request, "application/json");
+        if (path == "/api/touch") return respond(request, 200, input_diagnostics_json());
         return respond(request, 200, path == "/api/firmware" ? ota_status_json() : redactedConfig(config));
     }
     if (path == "/api/firmware") return ota_upload(request);
@@ -85,7 +87,7 @@ void portal_init() {
     settings.recv_wait_timeout = 1; settings.send_wait_timeout = 2;
     httpd_handle_t server;
     ESP_ERROR_CHECK(httpd_start(&server, &settings));
-    for (const auto& path : {"/", "/api/config", "/api/firmware"}) {
+    for (const auto& path : {"/", "/api/config", "/api/firmware", "/api/touch"}) {
         httpd_uri_t uri{}; uri.uri = path; uri.method = HTTP_GET; uri.handler = route;
         ESP_ERROR_CHECK(httpd_register_uri_handler(server, &uri));
     }
