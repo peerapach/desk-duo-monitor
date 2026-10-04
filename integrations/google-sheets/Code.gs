@@ -196,7 +196,7 @@ function quotedAtCell_(value) {
   var normalized = value.trim();
   if (normalized.length === 0) return { valid: true, blank: true };
 
-  var match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?(Z|[+-]\d{2}:\d{2})$/.exec(normalized);
+  var match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?(Z|[+-]\d{2}:\d{2})$/.exec(normalized);
   if (!match) return { valid: false, blank: false };
 
   var year = Number(match[1]);

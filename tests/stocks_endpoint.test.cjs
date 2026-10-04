@@ -226,6 +226,19 @@ test('buildStocksPayload rejects quotedAt strings without a timezone or with an 
   }
 });
 
+test('buildStocksPayload normalizes high-precision fractional seconds for UTC and offset quotes', () => {
+  const result = build([
+    ['symbol', 'price', 'quotedAt'],
+    ['PTT', 10, '2026-10-04T03:00:00.123456Z'],
+    ['AOT', 20, '2026-10-04T10:00:00.987654+07:00'],
+  ]);
+
+  assert.deepEqual(result.items, [
+    { symbol: 'PTT', label: 'PTT', price: 10, currency: 'THB', quotedAt: '2026-10-04T03:00:00.123Z' },
+    { symbol: 'AOT', label: 'AOT', price: 20, currency: 'THB', quotedAt: '2026-10-04T03:00:00.987Z' },
+  ]);
+});
+
 test('buildStocksPayload rejects an invalid Date quote', () => {
   assert.equal(build([['symbol', 'price', 'quotedAt'], ['PTT', 10, new Date('invalid')]]).error.code, 'invalid_sheet');
 });
