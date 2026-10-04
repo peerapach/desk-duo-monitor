@@ -2,11 +2,13 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Deliver locally tested Google Sheets stocks endpoint source and a CodexBar app hook sender for the future ESP32 receiver.
+**Goal:** Deliver locally tested Sheets endpoint, CodexBar sender, and buildable CYD portrait firmware for the approved Desk Duo design.
 
-**Architecture:** Apps Script reads a configured private sheet and returns bounded stocks JSON. A Python standard-library sender receives CodexBar hook JSON on stdin and posts normalized Claude/Codex usage to the ESP32 over LAN. ESP32 firmware and real cloud/account deployment are subsequent work after the required hardware and account facts are available.
+**Architecture:** Apps Script returns bounded stocks JSON and the Python sender forwards normalized usage. Firmware receives usage, fetches configurable weather/stocks endpoints independently, and renders two animated characters on portrait CYD. User confirmed the hardware during execution; the two firmware tasks below extend the same plan and ledger, while upload and live cloud/account verification remain deferred.
 
 **Tech Stack:** Google Apps Script V8; Node.js 20+ built-in test runner for Apps Script fixtures; Python 3.10+ standard library and unittest.
+
+Firmware extension: C++17, cJSON from pinned ESP-IDF 5.5.3, LVGL 9.2.2; PlatformIO Core 6.2.0 / espressif32 6.13.0. Native compiler clang/clang++ for pure firmware-core tests. Public truststore 0.10.4 for build commands using existing system CAs.
 
 **Spec:** `docs/superpowers/specs/2026-10-04-desk-duo-design.md`
 
@@ -14,7 +16,7 @@
 
 - Mac sends only Claude/Codex usage; weather and stocks are fetched by ESP32.
 - No CodexBar CLI requirement; hook commands run directly without a shell.
-- Two animated characters, portrait split layout, no session working/idle tracking in this version. This milestone defines data feeds, not display firmware.
+- Two animated characters, portrait split layout, no session working/idle tracking in this version. Tasks1–2 define data feeds; Tasks3–4 implement display firmware source and build.
 - Stocks: `schemaVersion: 1`, generatedAt is response generation time, optional quotedAt is source quote time; missing numbers are not zero.
 - Apps Script reads at most 200 data rows and returns at most 5 items; unknown columns are ignored. Sheet selection and credentials come from Script Properties.
 - Authenticate Apps Script query `accessToken` before reading the Sheet; errors are coarse JSON codes without private IDs, tokens or upstream error text.
@@ -22,6 +24,12 @@
 - Sender requires a device token, uses HTTP POST /api/usage, refuses redirects, and bounds request duration; no secrets or full URLs in error messages.
 - Shell commands start with `rtk`; use `rtk proxy` for unfiltered commands.
 - Keep all changes and commits within project-local Git; no deployment, hook enablement, device flash, or edits to parent workspace.
+- Firmware extension: user-confirmed ESP32-2432S028R, ESP32-D0WD-V3 rev3.1, 4MB, no PSRAM; portrait 240×320. Device is disconnected; build/native verification only.
+- Preserve measured LCD/touch bus separation and upstream license notices; portrait MADCTL0x48 and corner mapping still require physical smoke tests.
+- Config AP uses a generated per-device password and HTTP Basic admin auth; usage bearer token is separate. Stored secrets never appear in GET settings or logs.
+- Display never waits on network IO; model and config updates are atomic, stale/error responses retain data only for the same configured source. Changing a source resets it to unknown and invalidates in-flight old responses.
+- HTTPS uses verified certificate bundle and SNTP; at most4 redirects; cross-origin redirects drop configured headers; HTTPS→HTTP downgrade is rejected.
+- Source bodies ≤16384 bytes, config body ≤8192, usage body ≤4096; parsing nesting depth ≤16; source fetch budget10 seconds. No full-screen multiple RGB565 buffers.
 
 ## Review Focus
 
@@ -30,6 +38,8 @@
 3. Bad or missing accessToken: never open the sheet, return only auth_required (Task 1).
 4. Missing secondary quota and invalid bool/NaN input: omit absent windows, reject invalid scalars before sending (Task 2).
 5. Redirect/network failure/receiver errors: keep bearer token off other hosts and sanitize errors (Task 2).
+
+Firmware extension coverage: version/type/numeric validity, unknown versus zero, config-generation stale responses, source changes, redacted settings, mapped hourly timestamps, redirect header policy and data retention (Task 3). Target compile plus nonblocking task architecture, verified TLS, saved settings and physical test limitations (Task 4).
 
 ## Planning Discovery
 
@@ -134,4 +144,66 @@ Run Python unittest command and Node endpoint test command. Expect all pass. Run
 
 ## Execution Boundary
 
-This plan ships the two hardware-independent components. Hardware identity/pins, compiler installation, receiver firmware, portrait UI on physical device, Wi-Fi web configuration and live Sheet deployment are not claimed complete by these tasks. Continue with a firmware plan once the board facts are established. No protocol here requires weather or stock fetching on Mac.
+Tasks1–2 ship the hardware-independent components. Hardware is now confirmed, so Tasks3–4 add firmware source and target compilation to this same execution. No upload, successful backup or live Google/CodexBar/physical display result is claimed. No protocol requires weather or stocks fetching on Mac.
+
+## Planning Discovery — firmware extension
+
+Status: READY for source/build/native verification; user removed board due to low battery. Read-only /root/firmware_discovery established CYD pins, separate SPI touch, IDF verified-CA route, upstream memory constraints and license. Primary checked installed platform manifest: framework-espidf~3.50503.0; SDK cJSON source/header are present. PlatformIO6.2.0 and SDK installed project-locally. Private CA download issue resolved by existing macOS trust; no certificate validation disabled. Evidence and source links are in the spec firmware addendum and this plan's workspace firmware-discovery.md.
+
+### Task 3: Portable firmware model, parsers and settings policy
+
+**Files:** Create `firmware/main/core.hpp`, `firmware/main/core.cpp`, `tests/firmware_core_test.cpp`, `scripts/test_firmware.py`, `scripts/pio.py`, `scripts/build_trust/sitecustomize.py`, `requirements-build.txt`, `examples/device-config.example.json`, `examples/weather-response.json`.
+
+**Interfaces:**
+- Namespace `deskduo`; no GPIO, FreeRTOS, Wi-Fi or LVGL imports in core files. Use C++17 and SDK cJSON for parsing.
+- `template<typename T> struct ParseResult` contains `std::optional<T> value` and `std::string error` (empty on success, coarse code on failure).
+- Public types `Usage`, `Stocks`, `Weather`, `SourceConfig`, `Config`, `Model`, `Snapshot`, `TouchCalibration`; define all in core.hpp. Use bounded strings/containers per spec; epochs int64 UTC seconds, source-arrival time uint64 monotonic milliseconds.
+- `parseUsage(const std::string&) -> ParseResult<Usage>`, `parseStocks(const std::string&) -> ParseResult<Stocks>`, `parseWeather(const std::string&, const SourceConfig&) -> ParseResult<Weather>`.
+- `defaultConfig() -> Config`, `applyConfigPatch(const Config&, const std::string&) -> ParseResult<Config>`, `parseStoredConfig(const std::string&) -> ParseResult<Config>` (validated internal NVS restoration, including generated setupPassword), `serializeConfig(const Config&) -> std::string` (internal NVS only), `redactedConfig(const Config&) -> std::string` (public authenticated settings).
+- Config JSON fields: ssid, wifiPassword, usageToken, setupPassword (internal only); weather/stocks each {url,headers object,refreshSeconds}; weather additionally {label,fields object}; autoRotateSeconds; touch {swapAxes,invertX,invertY,minX,maxX,minY,maxY}. SetupPassword must not be writable through config patch.
+- Weather fields names: temperature, humidity, weatherCode, updatedAt, utcOffsetSeconds, hourlyTimes, hourlyTemperatures, hourlyRainProbability. Default mappings for Open-Meteo current.temperature_2m / current.relative_humidity_2m / current.weather_code / current.time / utc_offset_seconds / hourly.time / hourly.temperature_2m / hourly.precipitation_probability. Dot paths may include bounded array indexes; reject malformed paths; max128 bytes.
+- `Model::applyConfig(const Config&)`, `Model::acceptUsage(const Usage&, uint64_t nowMs)`, `Model::acceptStocks(const Stocks&, uint64_t nowMs, uint64_t generation)`, `Model::acceptWeather(const Weather&, uint64_t nowMs, uint64_t generation)`, `Model::markFailed(const std::string& source, uint64_t generation)`, `Model::snapshot(uint64_t nowMs) -> Snapshot`, `Model::generation() -> uint64_t`.
+- Snapshot exposes only render data, receipt times, stale/unknown flags and nonsecret display settings. No config passwords/tokens/headers/URLs in render snapshot.
+- `redirectHeadersAllowed(const std::string& from,const std::string& to) -> bool` true only for same origin; `redirectTargetAllowed(from,to) -> bool` rejects HTTPS downgrade and invalid schemes/userinfo/control characters. `mapTouch(int rawX,int rawY,const TouchCalibration&) -> std::pair<int,int>` clamps to portrait coordinates.
+
+- [ ] **Step1: Write native failing tests for public behaviours.** Use real parsing/model functions and existing shared fixtures. Representative assertions:
+
+```cpp
+auto u = deskduo::parseUsage(usageFixture);
+assert(u.value.has_value());
+assert(u.value->primary->usedPercent == 32.0);
+auto absent = deskduo::parseUsage(R"({"schemaVersion":1,"type":"usage","provider":"claude","updatedAt":"2026-10-04T03:00:00Z"})");
+assert(absent.value && !absent.value->primary && !absent.value->secondary);
+auto zero = deskduo::parseStocks(R"({"schemaVersion":1,"generatedAt":"2026-10-04T03:00:00Z","items":[{"symbol":"PTT","price":0,"currency":"THB"}]})");
+assert(zero.value && zero.value->items[0].price == 0.0);
+```
+
+Required cases: invalid JSON/trailing data/nesting17; wrong schema/provider/types/bool/nonfinite/ranges; leap dates/timezone/fractional seconds; stocks missing values, invalid negative price, >5 items, error envelope; weather zero/negative temperature, humidity0..100, invalid WMO code, optional missing arrays,4 forecast slots, local-naive timestamps plus utc_offset_seconds25200 vs no-offset unknown; path lookup indexes/malformed path. Config patch preserves omitted fields; rejects oversized URL/headers, CRLF/userinfo, invalid intervals, rotation1, unauthorized setupPassword change, invalid touch spans; round-trip internal config and public redaction must omit all secrets and URL queries. Model first failure stays unknown, later failure retains values/stale, stale age threshold2×refresh, old generation ignored, changed source clears old data, older usage does not overwrite newer same provider, both providers independent. Redirect same-origin/default-port handling and HTTPS downgrade; touch clamps all four endpoints into240×320. Tests assert actual outputs, not implementation structure.
+
+- [ ] **Step2: Run RED.** `rtk proxy python3 scripts/test_firmware.py` builds test binary with clang/clang++, core sources, and SDK cJSON.c. If runner absent initially compile equivalent manually; record assertion failures caused by missing behaviour. The runner locates SDK from PLATFORMIO_CORE_DIR or project .platformio, uses temp/output under project .platformio/native-tests, compiles cJSON as C, then core/tests as C++17; does not need device or network.
+
+- [ ] **Step3: Implement core parsers/settings/model.** All validation before state changes; JSON max bounds and nesting cap16 including strings/escapes. Whitespace after root allowed, trailing payload rejected. Epoch conversion independent of process timezone, calendar validated, no unchecked unsigned conversion. Unknown optional values remain optional; state failure doesn't fabricate zeros. Accept stocks source fields per committed endpoint; configuration-source changes clear only corresponding cached data and invalidate in-flight generation. Source-generation acceptance is explicit. Snapshot uses monotonic age, no secrets. Config defaults have endpoints empty, refresh900/300, rotation20, label Weather, empty credentials for runtime RNG provisioning. Usage token if provided length16..128 printable non-whitespace; WiFi SSID≤32 bytes/password≤64; setup password generated runtime and never patched. Header bounds6 /64/256, URL1024, mapping128, body8192; touch defaults based on raw12-bit ADC with transform configurable, not claimed calibrated. Keep source header/private query values only in serialized internal config, never redacted view.
+
+- [ ] **Step4: Add build/native helpers and fixtures.** requirements-build pins platformio6.2.0 + truststore0.10.4. `scripts/pio.py` runs PlatformIO as a CLI using public truststore.inject_into_ssl (application-only) and project .platformio; propagate existing system trust into build Python subprocesses via an explicitly scoped sitecustomize bootstrap (no global Python/settings edits and no disabling SSL). Preserve existing PYTHONPATH, derive trusted installed package location rather than arbitrary downloaded CA. It only acts for this build command; does not modify Python sender runtime. Native runner/fixtures include no real credentials. Example device config uses dummy secrets/empty URLs and fields above; weather fixture values explicitly simulated. No SDK vendoring into Git.
+
+- [ ] **Step5: Run native GREEN and current full suites, self-review, commit.** Native tests via runner; Python unittest and Node endpoint tests via existing commands. Parse examples and diff check. No device or live endpoints. Commit only task-owned files. Report TDD, compiler commands, tests and public header contract for Task4.
+
+### Task 4: CYD runtime, portrait UI, source networking and configuration portal
+
+**Files:** Create `firmware/platformio.ini`, `firmware/CMakeLists.txt`, `firmware/sdkconfig.defaults`, `firmware/partitions.csv`, `firmware/main/CMakeLists.txt`, `firmware/main/main.cpp`, `firmware/main/runtime.hpp`, `firmware/main/runtime.cpp`, `firmware/main/display.hpp`, `firmware/main/display.cpp`, `firmware/main/input.hpp`, `firmware/main/input.cpp`, `firmware/main/network.hpp`, `firmware/main/network.cpp`, `firmware/main/portal.hpp`, `firmware/main/portal.cpp`, `firmware/main/ui.hpp`, `firmware/main/ui.cpp`, `firmware/main/assets.*`, `firmware/main/fonts/*` as needed, `firmware/main/idf_component.yml`, `firmware/dependencies.lock` from build, `firmware/README.md`, `THIRD_PARTY_NOTICES.md`, `scripts/package_firmware.py`. Update `README.md`, `docs/protocol.md`, `.gitignore` for managed/generated dependencies and artifacts; update native tests only to cover new pure policy helpers if required.
+
+**Interfaces:**
+- Read core.hpp and Task3 report, use exact implemented core contracts, not parallel JSON/model implementation.
+- `app_main` initializes NVS, per-device secrets, LVGL/display/input, WiFi AP+STA, portal and network task. Runtime owns Model/Config and short-held FreeRTOS mutex; helpers provide validated config/model snapshots; no secrets in render state.
+- `display_init()` / `display_flush(x1,y1,x2,y2,pixels)` bind measured LCD SPI2; `input_init()` / `input_read(...)` uses SPI3, core touch mapping. `ui_init(...)` / `ui_tick(...)` operate on LVGL in one UI task only. `network_task(void*)` copies config under lock then releases it during IO; update only if generation unchanged.
+- Portal GET `/` and `/api/config` authenticated HTTP Basic (`admin`, setupPassword). POST `/api/config` requires Basic + application/json and validated patch; save NVS before atomic apply. POST `/api/usage` requires separate bearer + application/json; payload max4096, validate before model update; wrong token401, invalid payload400, success204. GET config uses redactedConfig only. Persist failures return503 without applying memory change.
+
+- [ ] **Step1: Test required policy seams before implementation.** Add genuine native tests for any introduced helpers: auth role separation and constant-time comparison if used, body-length/content-type rejection, config generation on changed source, redirect count4 and header stripping on cross-origin, safe source errors/redacted settings. Existing portable cases cover core behaviour; actual GPIO/RTOS/SDK calls require target build and future hardware tests, not mirror tests against source text.
+
+- [ ] **Step2: Implement target build and runtime.** Pin espressif32@6.13.0 / framework espidf / board esp32dev / src_dir main; LVGL9.2.2 via component manager. Enable certificate bundle, C++17, required LVGL fonts and partial software renderer; no PSRAM. Factory partition fits4MB, no OTA feature required. Random12-char WPA AP password stored NVS/displayed setup; independent random32-hex usage token. SSID DeskDuo-<short device suffix>; AP address192.168.4.1. Existing config survives reset; validated save/application has one owner, config generations prevent stale response races. Basic admin applies only portal; usage token cannot modify settings. Protect writes against cross-origin simple-form requests by requiring JSON; do not add permissive CORS. Wrong auth never leaks settings. Secrets never logged or echoed by GET; credential inputs blank unless user edits.
+
+- [ ] **Step3: Implement source networking and time.** Direct device GET weather/stocks, one source at a time in network task. Use verified IDF TLS bundle/hostname and SNTP before HTTPS. Honor 10-second overall budget and max16384 response; never rely solely on socket inactivity for total deadline. Follow ≤4 redirects with verified new target, reject HTTPS downgrade, drop all configured headers on origin change. Keep URL queries/credentials out of logs. Don't hold model/config lock during IO; invalid source data only marks source failed, no overwrite. URL-empty sources issue no request. Source change discards old response via generation. Request failure/timeout does not stop animation or other polling indefinitely. Record SDK API/bounds evidence and any off-board verification limits.
+
+- [ ] **Step4: Implement selected portrait UI and setup portal.** Match the approved split mockup: Claude upper/Codex lower with their own primary/secondary bars and resets; both loop animations independent of real agent state. Weather page current conditions+four forecast slots; Stocks shows3 rows at a time and cycles remaining entries when >3; mini Claude+Codex in both pages. Show age/stale/unknown honestly; no fake startup numbers/clock. Clock default Bangkok timezone for this user, SNTP failure shows unknown time. Use LVGL partial buffer240×24×2 only; efficient sprite/geometry assets, no hundreds of per-pixel heap widgets or multiple full-screen buffers. Use Thai-compatible font(s) for Thai screen labels; preserve upstream/font notices when copied. First setup screen shows AP credentials, portal address and device usage token for local configuration; a BOOT-button action can show setup again without erasing config. Portal forms set WiFi/endpoints/headers/mappings/intervals/rotation/token with validated patch; no prefilled stored secrets. Touch driver on separate SPI3, swipe changes pages; portrait transform is configurable and physical corner check deferred.
+
+- [ ] **Step5: Verify target build and package without flashing.** Run `rtk proxy .venv/bin/python scripts/pio.py run -d firmware -e cyd` with allowed download escalation if needed. Expect SUCCESS, report RAM/flash usage. Run complete native+Python+Node tests on final tree and JSON example parse/diff check. `scripts/package_firmware.py` merges actual built bootloader/partitions/application offsets using installed esptool, creates ignored `artifacts/desk-duo-cyd.bin` plus SHA256/metadata; no serial options or device writes. Verify merged image metadata/size. Thai firmware guide covers setup, bridge/IP/token, Sheets endpoint/redirect, weather config, backup retry at conservative baud115200, future image upload command and orientation/colors/touch/heap/slow-network smoke checklist. Update root README so it no longer says receiver not implemented, while stating physical/live/deployment verification still pending. Commit task-owned source only, not caches/font build intermediates/binary/private config. Final report includes full commands/output and no physical success claim.

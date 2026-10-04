@@ -129,3 +129,53 @@ ESP32 ตั้ง URL ของ Apps Script และ refresh interval ได�
 Apps Script ใช้ Script Properties `SPREADSHEET_ID`, `SHEET_NAME`, `ACCESS_TOKEN` ตรวจ query parameter `accessToken` ก่อนอ่าน Sheet อ่านไม่เกิน 200 แถวข้อมูล และตอบได้ไม่เกิน 5 รายการเพื่อให้เหมาะกับบอร์ด ตารางต้องมี header `symbol`, `price`; คอลัมน์อื่นเป็น optional ใช้ `THB` เมื่อ currency ไม่มี และใช้ symbol เมื่อ label ไม่มี ค่าตัวเลขว่างให้ omit; ค่าที่ไม่ใช่ตัวเลขหรือไม่ finite ให้ตอบ `invalid_sheet` แทนแสดงราคาปลอม ข้อมูลหลังรายการที่ 5 ไม่เป็นส่วนหนึ่งของ response
 
 คำตอบผิดพลาดของ Apps Script ใช้ JSON `{ "schemaVersion": 1, "error": { "code": "..." } }` ไม่พึ่ง HTTP status ที่ ContentService ตั้งเองไม่ได้ เก็บ Sheet เป็น private ได้และ publish เฉพาะ web app ที่ตรวจ token การตั้งสิทธิ์และ deploy จริงยังต้องทำกับบัญชีของผู้ใช้
+
+## ฮาร์ดแวร์ที่ยืนยันแล้วและขั้น firmware
+
+ผู้ใช้ยืนยันว่าใช้ ESP32-2432S028R (CYD) รุ่นเดียวกับ TamaClaude การอ่านผ่าน esptool ที่พอร์ต `/dev/cu.usbserial-2120` พบ ESP32-D0WD-V3 revision 3.1 และ flash 4 MB วันที่ 4 ตุลาคม 2026 ไม่มีการเขียน flash ผู้ใช้ถอดบอร์ดออกเพราะแบตใกล้หมด ให้ทำ source, native tests และ build ต่อในเครื่อง; การ upload และทดสอบจอจริงรอการเชื่อมต่อครั้งหน้า
+
+การสำรอง flash ครั้งแรกไม่สำเร็จที่ baud 460800 (Invalid head of packet 0xFF) และไม่ได้สร้างไฟล์ backup ที่ใช้งานได้ ต้องสำรองใหม่ด้วย baud ที่ต่ำกว่าก่อนเขียน firmware บนบอร์ดในอนาคต
+
+### ชุด build และ driver
+
+- PlatformIO Core 6.2.0 ใน project-local Python environment, `platformio/espressif32@6.13.0`, ESP-IDF 5.5.3, board profile esp32dev, 4 MB flash, ไม่ใช้ PSRAM
+- LVGL 9.2.2 สำหรับ partial rendering และ widget layout ใช้ buffer 240×24 RGB565 เพียงชุดเดียว (11,520 bytes) ไม่สร้าง framebuffer เต็มจอหลายชุด
+- ใช้ LCD SPI2 ตาม TamaClaude: MOSI 13, MISO 12, SCLK 14, CS 15, DC 2, backlight 21, ไม่มีขา reset แยก, SPI clock 40 MHz, inversion off, RGB565
+- ใช้ค่า MADCTL 0x48 เป็นค่าเริ่มต้น portrait 240×320 ตาม ILI9341/TFT_eSPI ยังต้องตรวจบนจอจริงเรื่องทิศ สี และ inversion
+- touch XPT2046 ใช้ SPI3 แยก: CLK 25, MOSI 32, MISO 39, CS 33, IRQ 36; ไม่ใช้ touch บน bus ของ LCD ค่า transform แนวตั้งยังต้องตรวจทั้งสี่มุมบนจอจริง มี calibration config สำหรับแก้โดยไม่แก้ driver
+- ใช้ code/font บางส่วนของ TamaClaude ได้โดยเก็บ MIT copyright/license notice และตรวจ notice ของ font ที่นำมาใช้
+
+### การทำงานและข้อมูล
+
+Display loop เล่นสองตัวละครต่อเนื่อง โดยหน้าหลักแบ่ง Claude ด้านบน / Codex ด้านล่าง หน้า Weather/Stocks เก็บตัวละครสองตัวแบบย่อ หน้าเปลี่ยนทุก 20 วินาทีโดย default และเปลี่ยนด้วย swipe ได้ เมื่อตั้ง autoRotateSeconds=0 จะค้างหน้าเดิม
+
+แยก HTTP fetch ออกจาก display loop เป็น FreeRTOS network task มี timeout และขนาด response สูงสุด 16,384 bytes ทำ fetch ทีละแหล่ง ไม่ถือ model lock ระหว่าง network IO เมื่อข้อมูลผิดหรือโหลดไม่สำเร็จคงค่าล่าสุดและแสดง stale; ก่อนได้ข้อมูลครั้งแรกแสดง `--` การอ่านข้อความจาก JSON ต้องจำกัด nesting depth และตรวจ types/finite values
+
+Usage รับ protocol ที่กำหนดไว้ `/api/usage` ด้วย bearer token และอัปเดตข้อมูล provider แบบ atomic Reject schema/provider/field type ที่ผิด ไม่ใช้ account identity Clock และ reset countdown ไม่แสดงเวลาสมมติเมื่อยังไม่ sync SNTP
+
+Stocks อ่าน schemaVersion 1, items สูงสุด 5 รายการ ถ้ามีมากกว่า 3 รายการให้หมุนชุดที่แสดง เพื่อให้เห็นทุกรายการ ใช้ source quotedAt ถ้ามี; generatedAt เป็นเวลา endpoint สร้างคำตอบ ไม่ใช่เวลาราคาตลาด
+
+Weather อ่าน JSON ตาม field mapping มีอุณหภูมิ ความชื้น weather code และ optional hourly time/temperature/rain arrays แสดง forecast สูงสุด 4 ช่วงเวลา URL ที่ยังไม่ได้ตั้งไม่เกิด request ไม่ถือ Bangkok ใน mockup เป็นตำแหน่งจริงของผู้ใช้ เวลาท้องถิ่นที่ไม่มี timezone ใช้ utc_offset_seconds จาก endpoint เมื่อมี; ถ้าไม่มีให้ถือเวลา source เป็น unknown แทนเดา UTC
+
+### การตั้งค่าและการเข้าถึง
+
+เปิด Wi-Fi AP สำหรับตั้งค่าด้วย SSID เฉพาะเครื่องและ password random 12 ตัวอักษร เก็บใน NVS และแสดงบนจอ setup ใช้ password นี้เป็น HTTP Basic admin credential (`admin`) ของ portal ซึ่งแยกจาก usage bearer token ค่าที่สุ่มด้วย device RNG ไม่มี token/password คงที่ใน firmware
+
+หน้า portal ตั้ง Wi-Fi, weather/stock URL, headers, refresh interval, weather field mapping, auto rotation และ usage bearer token ได้ ค่าที่ไม่ส่งมาใน patch คงค่าเดิม GET settings ไม่คืน Wi-Fi password, bearer token, headers หรือ query string ที่อาจมี accessToken ให้แสดงเฉพาะสถานะว่าตั้งแล้วและ non-secret settings หลัง authenticate
+
+URL รับเฉพาะ http/https ที่ไม่มี userinfo, ไม่แสดง full URL หรือ secrets ใน log กำหนดเพดาน URL 1,024 bytes, header names/values 64/256 bytes และสูงสุด 6 headers ต่อ source; settings body ไม่เกิน 8,192 bytes Refresh interval 30–86,400 วินาที (weather default 900, stocks default 300), auto rotation 0 หรือ 5–300 วินาที
+
+HTTPS ตรวจ certificate ด้วย ESP-IDF certificate bundle และ hostname verification ต้อง sync เวลา SNTP ก่อน request รองรับ redirect สูงสุด 4 ครั้ง; เมื่อ origin เปลี่ยนห้ามส่ง configured headers ต่อ และห้าม downgrade HTTPS ไป HTTP ไม่ใช้ insecure TLS
+
+การบันทึก config ต้อง validate ก่อนเขียน NVS และ apply แบบ atomic Source ที่ URL ว่างถือว่าปิด การตั้งค่าเพื่อใช้งานจริงทำภายหลังได้โดยไม่ compile ใหม่ ไม่มีการใช้ข้อมูล Wi-Fi/Sheet/token จริงในการ build หรือ tests
+
+### หลักฐานและขอบเขตการตรวจ
+
+- https://github.com/thaitop/tamaclaude/blob/main/docs/hardware.md
+- https://github.com/thaitop/tamaclaude/blob/main/firmware/main/ct_lcd.c
+- https://github.com/thaitop/tamaclaude/blob/main/firmware/main/ct_touch.c
+- https://github.com/Bodmer/TFT_eSPI/blob/master/examples/Test%20and%20diagnostics/Colour_Test/Colour_Test.ino
+- https://github.com/platformio/platform-espressif32/releases/tag/v6.13.0
+- https://docs.espressif.com/projects/esp-idf/en/v5.5.3/esp32/api-reference/protocols/esp_crt_bundle.html
+
+ตรวจ native model/parsers/config validation, compile target ESP32 และสร้าง image ในเครื่องได้ การตรวจ orientation/touch, minimum heap ระหว่าง HTTPS และ animation, restore backup, Wi-Fi จริง, live Apps Script/CodexBar และการ flash ไม่ถือว่าสำเร็จจนกว่าจะตรวจจริงหลังเชื่อมต่อและตั้งค่าข้อมูลของผู้ใช้

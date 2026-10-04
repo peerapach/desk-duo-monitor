@@ -7,3 +7,5 @@ __pycache__/
 .venv/
 .pio/
 build/
+.device-backups/
+.platformio/
