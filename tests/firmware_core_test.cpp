@@ -439,6 +439,62 @@ int main(int argc, char** argv) {
         CHECK(deskduo::bodyPolicy(1, "text/plain", 8192) == 415);
         CHECK(deskduo::bodyPolicy(0, "application/json", 8192) == 400);
         CHECK(deskduo::bodyPolicy(1, "application/jsonp", 8192) == 415);
+        // Every spelling accepted by config/redirect policy must select verified
+        // TLS and require a usable clock; a case-sensitive test leaks HTTP bytes.
+        for (const std::string& url : {"https://one.test/data", "HTTPS://one.test/data?accessToken=private", "HtTpS://one.test/data"}) {
+            auto configured = deskduo::applyConfigPatch(deskduo::defaultConfig(),
+                "{\"weather\":{\"url\":\"" + url + "\"}}");
+            CHECK(configured.value.has_value());
+            CHECK(deskduo::transportPolicy(configured.value->weather.url, 0).secure);
+            CHECK(!deskduo::transportPolicy(configured.value->weather.url, 0).mayConnect);
+            CHECK(deskduo::transportPolicy(configured.value->weather.url, 1700000000).secure);
+            CHECK(deskduo::transportPolicy(configured.value->weather.url, 1700000000).mayConnect);
+            deskduo::FetchPolicy redirect("https://one.test/original", 100);
+            CHECK(redirect.redirect(url));
+            CHECK(redirect.sendHeaders);
+            CHECK(deskduo::transportPolicy(redirect.url, 0).secure);
+            CHECK(!deskduo::transportPolicy(redirect.url, 0).mayConnect);
+            CHECK(deskduo::transportPolicy(redirect.url, 1700000000).mayConnect);
+            CHECK(redirect.remaining(10100) == 0);
+        }
+        CHECK(!deskduo::transportPolicy("ftp://one.test/data", 1700000000).mayConnect);
+        CHECK(!deskduo::transportPolicy("https:///data", 1700000000).mayConnect);
+        CHECK(!deskduo::transportPolicy("HTTP://one.test/data", 0).secure);
+        CHECK(deskduo::transportPolicy("HTTP://one.test/data", 0).mayConnect);
+        // Root-relative targets replace the old path/query, including pathless
+        // origins whose query itself contains slashes or another complete URL.
+        for (const std::string& from : {
+            "https://one.test?accessToken=private",
+            "https://one.test?next=/old/path",
+            "https://one.test?next=https://other.test/path",
+            "https://one.test/old/path?accessToken=private",
+            "https://one.test"}) {
+            CHECK(deskduo::redirectTargetAllowed(from, from));
+            CHECK(deskduo::resolveRedirectTarget(from, "/data?new=1") == "https://one.test/data?new=1");
+            deskduo::FetchPolicy relative(from, 100);
+            CHECK(relative.redirect("/data?new=1"));
+            CHECK(relative.url == "https://one.test/data?new=1");
+            CHECK(relative.sendHeaders);
+            CHECK(relative.remaining(10100) == 0);
+        }
+        deskduo::FetchPolicy mixedRelative("HtTpS://one.test:443?next=/old", 100);
+        CHECK(mixedRelative.redirect("/data"));
+        CHECK(mixedRelative.url == "HtTpS://one.test:443/data");
+        CHECK(mixedRelative.sendHeaders);
+        CHECK(deskduo::transportPolicy(mixedRelative.url, 0).secure);
+        CHECK(!deskduo::transportPolicy(mixedRelative.url, 0).mayConnect);
+        CHECK(!mixedRelative.redirect("//other.test/data"));
+        CHECK(!mixedRelative.redirect("relative/path"));
+        CHECK(!mixedRelative.redirect("HTTP://one.test/data"));
+        deskduo::FetchPolicy upgrade("http://one.test/start", 100);
+        CHECK(upgrade.redirect("HtTpS://one.test/data"));
+        CHECK(!upgrade.sendHeaders);
+        CHECK(deskduo::transportPolicy(upgrade.url, 1699999999).secure);
+        CHECK(!deskduo::transportPolicy(upgrade.url, 1699999999).mayConnect);
+        CHECK(deskduo::transportPolicy(upgrade.url, 1700000000).mayConnect);
+        CHECK(upgrade.redirect("HTTPS://two.test/data"));
+        CHECK(upgrade.redirect("https://one.test/data"));
+        CHECK(!upgrade.sendHeaders);
         deskduo::FetchPolicy fetch("https://one.test/start", 100);
         CHECK(fetch.remaining(100) == 10000);
         CHECK(fetch.remaining(10099) == 1);

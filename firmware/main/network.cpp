@@ -174,10 +174,10 @@ esp_err_t received(esp_http_client_event_t* event) {
 std::optional<std::string> fetch(const SourceConfig& source) {
     FetchPolicy policy(source.url, now_ms());
     while (policy.remaining(now_ms()) > 0) {
-        const bool secure = policy.url.rfind("https://", 0) == 0;
+        const auto tls = transportPolicy(policy.url, std::time(nullptr));
         // SNTP failure is honest unavailability, never disabled certificate time checks.
-        if (secure && std::time(nullptr) < 1700000000) return std::nullopt;
-        Transport transport{policy, secure};
+        if (!tls.mayConnect) return std::nullopt;
+        Transport transport{policy, tls.secure};
         auto adapter = esp_transport_init();
         if (!adapter) return std::nullopt;
         esp_transport_set_context_data(adapter, &transport);
@@ -205,13 +205,8 @@ std::optional<std::string> fetch(const SourceConfig& source) {
         if (result != ESP_OK || transport.rejected || policy.remaining(now_ms()) == 0) return std::nullopt;
         if (status >= 200 && status < 300) return response.body;
         if (!(status == 301 || status == 302 || status == 303 || status == 307 || status == 308)) return std::nullopt;
-        // Relative Location is permitted only after resolving to a validated absolute URL.
-        std::string next = response.location;
-        if (next.rfind("/", 0) == 0 && next.rfind("//", 0) != 0) {
-            auto end = policy.url.find('/', policy.url.find("://") + 3);
-            next = policy.url.substr(0, end) + next;
-        }
-        if (!policy.redirect(next)) return std::nullopt;
+        // The same portable policy resolves, validates and strips headers.
+        if (!policy.redirect(response.location)) return std::nullopt;
     }
     return std::nullopt;
 }
