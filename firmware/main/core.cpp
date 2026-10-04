@@ -19,6 +19,12 @@ namespace {
 constexpr std::size_t kUsageBodyLimit = 4096;
 constexpr std::size_t kSourceBodyLimit = 16384;
 constexpr std::size_t kConfigBodyLimit = 8192;
+constexpr std::size_t kStoredConfigLimit = 32768;
+// Every accepted persisted string is bounded below; 4x covers quote/UTF-8 JSON escaping.
+// 2048 bytes covers all fixed keys, separators, booleans, numbers, and object punctuation.
+constexpr std::size_t kMaximumPersistedStringBytes = 288 + 2 * 1024 + 12 * (64 + 256) + 48 + 8 * (21 + 128);
+constexpr std::size_t kMaximumSerializedConfigBytes = 4 * kMaximumPersistedStringBytes + 2048;
+static_assert(kMaximumSerializedConfigBytes <= kStoredConfigLimit, "stored config cap must fit every valid config");
 constexpr std::size_t kMaximumJsonDepth = 16;
 constexpr std::size_t kMaximumUrlLength = 1024;
 constexpr std::size_t kMaximumHeaderCount = 6;
@@ -97,6 +103,67 @@ bool validateJsonNesting(const std::string& input) {
     return true;
 }
 
+bool jsonWhitespace(char value) {
+    return value == ' ' || value == '\t' || value == '\r' || value == '\n';
+}
+
+bool digit(char value) {
+    return value >= '0' && value <= '9';
+}
+
+bool validateJsonNumberLexemes(const std::string& input) {
+    bool inString = false;
+    bool escaped = false;
+    for (std::size_t index = 0; index < input.size();) {
+        const char value = input[index];
+        if (inString) {
+            if (escaped) escaped = false;
+            else if (value == '\\') escaped = true;
+            else if (value == '"') inString = false;
+            ++index;
+            continue;
+        }
+        if (value == '"') {
+            inString = true;
+            ++index;
+            continue;
+        }
+        if (value == '+' || (value == '.' && index + 1 < input.size() && digit(input[index + 1]))) return false;
+        if (value != '-' && !digit(value)) {
+            ++index;
+            continue;
+        }
+
+        std::size_t end = index;
+        if (input[end] == '-') {
+            if (++end >= input.size()) return false;
+        }
+        if (input[end] == '0') {
+            ++end;
+            if (end < input.size() && digit(input[end])) return false;
+        } else if (input[end] >= '1' && input[end] <= '9') {
+            while (end < input.size() && digit(input[end])) ++end;
+        } else {
+            return false;
+        }
+        if (end < input.size() && input[end] == '.') {
+            ++end;
+            if (end >= input.size() || !digit(input[end])) return false;
+            while (end < input.size() && digit(input[end])) ++end;
+        }
+        if (end < input.size() && (input[end] == 'e' || input[end] == 'E')) {
+            ++end;
+            if (end < input.size() && (input[end] == '+' || input[end] == '-')) ++end;
+            if (end >= input.size() || !digit(input[end])) return false;
+            while (end < input.size() && digit(input[end])) ++end;
+        }
+        if (end < input.size() && !jsonWhitespace(input[end]) && input[end] != ',' &&
+            input[end] != ']' && input[end] != '}') return false;
+        index = end;
+    }
+    return true;
+}
+
 bool hasDuplicateKeys(const cJSON* node) {
     if (cJSON_IsObject(node)) {
         std::set<std::string> keys;
@@ -123,6 +190,7 @@ ParsedJson parseJson(const std::string& input, std::size_t maximumBytes) {
         return {JsonPointer(nullptr, &cJSON_Delete), "string"};
     }
     if (!validateJsonNesting(input)) return {JsonPointer(nullptr, &cJSON_Delete), "depth"};
+    if (!validateJsonNumberLexemes(input)) return {JsonPointer(nullptr, &cJSON_Delete), "number"};
     const char* end = nullptr;
     JsonPointer root(cJSON_ParseWithOpts(input.c_str(), &end, 0), &cJSON_Delete);
     if (!root) return {JsonPointer(nullptr, &cJSON_Delete), "json"};
@@ -371,9 +439,9 @@ bool validateUsageWindow(const cJSON* node, std::optional<UsageWindow>& output) 
     window.usedPercent = percent;
     const cJSON* minutesNode = field(node, "windowMinutes");
     if (minutesNode != nullptr && !isNull(minutesNode)) {
-        int64_t minutes = 0;
-        if (!readInteger(minutesNode, 1, 10000000, minutes)) return false;
-        window.windowMinutes = static_cast<uint32_t>(minutes);
+        double minutes = 0;
+        if (!readNumber(minutesNode, minutes) || minutes <= 0.0) return false;
+        window.windowMinutes = minutes;
     }
     if (!parseOptionalTimestamp(field(node, "resetsAt"), window.resetsAt)) return false;
     output = window;
@@ -903,13 +971,13 @@ ParseResult<Stocks> parseStocks(const std::string& json) {
         const cJSON* priceNode = field(node, "price");
         if (priceNode != nullptr && !isNull(priceNode)) {
             double price = 0;
-            if (!readNumber(priceNode, price) || price < 0.0 || price > 1.0e12) return failure<Stocks>("price");
+            if (!readNumber(priceNode, price) || price < 0.0) return failure<Stocks>("price");
             item.price = price;
         }
         const cJSON* changeNode = field(node, "changePercent");
         if (changeNode != nullptr && !isNull(changeNode)) {
             double change = 0;
-            if (!readNumber(changeNode, change) || change < -1000.0 || change > 1000.0) return failure<Stocks>("change");
+            if (!readNumber(changeNode, change)) return failure<Stocks>("change");
             item.changePercent = change;
         }
         if (!parseOptionalTimestamp(field(node, "quotedAt"), item.quotedAt)) return failure<Stocks>("quoted_at");
@@ -924,6 +992,8 @@ ParseResult<Weather> parseWeather(const std::string& json, const SourceConfig& s
     if (!parsed.root) return failure<Weather>(parsed.error.c_str());
     const cJSON* root = parsed.root.get();
     if (!cJSON_IsObject(root)) return failure<Weather>("shape");
+    const cJSON* errorNode = field(root, "error");
+    if (errorNode != nullptr && !cJSON_IsFalse(errorNode)) return failure<Weather>("upstream_error");
     std::map<std::string, std::string> mappings;
     if (!resolveMappings(source, mappings)) return failure<Weather>("mapping");
     Weather result;
@@ -979,6 +1049,12 @@ ParseResult<Weather> parseWeather(const std::string& json, const SourceConfig& s
         }
     }
     result.hourlyCount = count;
+    bool hasMeasurement = result.temperature.has_value() || result.humidity.has_value() || result.weatherCode.has_value();
+    for (std::size_t index = 0; index < result.hourlyCount; ++index) {
+        hasMeasurement = hasMeasurement || result.hourlyTemperatures[index].has_value() ||
+                         result.hourlyRainProbability[index].has_value();
+    }
+    if (!hasMeasurement) return failure<Weather>("no_readings");
     return {std::move(result), {}};
 }
 
@@ -1003,7 +1079,7 @@ ParseResult<Config> applyConfigPatch(const Config& current, const std::string& j
 }
 
 ParseResult<Config> parseStoredConfig(const std::string& json) {
-    ParsedJson parsed = parseJson(json, kConfigBodyLimit);
+    ParsedJson parsed = parseJson(json, kStoredConfigLimit);
     if (!parsed.root) return failure<Config>(parsed.error.c_str());
     Config config = defaultConfig();
     if (!parseConfigObject(parsed.root.get(), config, true)) return failure<Config>("stored_config");
@@ -1011,7 +1087,10 @@ ParseResult<Config> parseStoredConfig(const std::string& json) {
 }
 
 std::string serializeConfig(const Config& config) {
-    return printJson(configJson(config, true, false));
+    if (!validateConfig(config)) return {};
+    std::string serialized = printJson(configJson(config, true, false));
+    if (serialized.size() > kStoredConfigLimit) return {};
+    return serialized;
 }
 
 std::string redactedConfig(const Config& config) {

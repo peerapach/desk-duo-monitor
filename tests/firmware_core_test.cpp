@@ -34,6 +34,18 @@ bool closeTo(double actual, double expected) {
     return std::fabs(actual - expected) < 0.000001;
 }
 
+std::string escapedHeaderPatch(const std::string& sourceName, const std::string& url) {
+    std::string json = "{\"" + sourceName + "\":{\"url\":\"" + url + "\",\"headers\":{";
+    for (int index = 0; index < 6; ++index) {
+        if (index != 0) json += ',';
+        json += "\"X-" + std::to_string(index) + "\":\"";
+        for (int quote = 0; quote < 256; ++quote) json += "\\\"";
+        json += '"';
+    }
+    json += "}}}";
+    return json;
+}
+
 void usageContract(const std::string& root) {
     const auto fixture = readFile(root + "/examples/usage-response.json");
     const auto usage = deskduo::parseUsage(fixture);
@@ -57,6 +69,27 @@ void usageContract(const std::string& root) {
     CHECK(zero.value.has_value());
     CHECK(closeTo(zero.value->primary->usedPercent, 0.0));
     CHECK(zero.value->updatedAt == 1709182800LL);
+
+    const auto fraction = deskduo::parseUsage(
+        R"({"schemaVersion":1,"type":"usage","provider":"codex","updatedAt":"2026-10-04T03:00:00Z","primary":{"usedPercent":1e2,"windowMinutes":0.5}})");
+    CHECK(fraction.value.has_value());
+    CHECK(fraction.value->primary->windowMinutes.has_value());
+    CHECK(closeTo(*fraction.value->primary->windowMinutes, 0.5));
+    const auto largeWindow = deskduo::parseUsage(
+        R"({"schemaVersion":1,"type":"usage","provider":"codex","updatedAt":"2026-10-04T03:00:00Z","primary":{"usedPercent":100,"windowMinutes":1e100}})");
+    CHECK(largeWindow.value.has_value());
+    CHECK(largeWindow.value->primary->windowMinutes.has_value());
+    CHECK(closeTo(*largeWindow.value->primary->windowMinutes / 1e100, 1.0));
+    CHECK(!deskduo::parseUsage(
+        R"({"schemaVersion":1,"type":"usage","provider":"codex","updatedAt":"2026-10-04T03:00:00Z","primary":{"usedPercent":100,"windowMinutes":0}})").value.has_value());
+    CHECK(!deskduo::parseUsage(
+        R"({"schemaVersion":1,"type":"usage","provider":"codex","updatedAt":"2026-10-04T03:00:00Z","primary":{"usedPercent":100,"windowMinutes":-0.5}})").value.has_value());
+    CHECK(!deskduo::parseUsage(
+        R"({"schemaVersion":1,"type":"usage","provider":"codex","updatedAt":"2026-10-04T03:00:00Z","primary":{"usedPercent":01}})").value.has_value());
+    CHECK(!deskduo::parseUsage(
+        R"({"schemaVersion":1,"type":"usage","provider":"codex","updatedAt":"2026-10-04T03:00:00Z","primary":{"usedPercent":1.}})").value.has_value());
+    CHECK(!deskduo::parseUsage(
+        R"({"schemaVersion":1,"type":"usage","provider":"codex","updatedAt":"2026-10-04T03:00:00Z","primary":{"usedPercent":1e+}})").value.has_value());
 
     CHECK(!deskduo::parseUsage("{").value.has_value());
     CHECK(deskduo::parseUsage(std::string(R"({"schemaVersion":1,"type":"usage","provider":"codex","updatedAt":"2026-10-04T03:00:00Z"})") + " \t\r\n").value.has_value());
@@ -93,6 +126,15 @@ void stocksContract(const std::string& root) {
     CHECK(zero.value.has_value());
     CHECK(closeTo(*zero.value->items[0].price, 0.0));
 
+    const auto largeFinite = deskduo::parseStocks(
+        R"({"schemaVersion":1,"generatedAt":"2026-10-04T03:00:00Z","items":[{"symbol":"BIG","price":1e20,"changePercent":2000},{"symbol":"NEG","price":0,"changePercent":-2000}]})");
+    CHECK(largeFinite.value.has_value());
+    CHECK(closeTo(*largeFinite.value->items[0].price / 1e20, 1.0));
+    CHECK(closeTo(*largeFinite.value->items[0].changePercent, 2000.0));
+    CHECK(closeTo(*largeFinite.value->items[1].changePercent, -2000.0));
+    CHECK(!deskduo::parseStocks(
+        R"({"schemaVersion":1,"generatedAt":"2026-10-04T03:00:00Z","items":[{"symbol":"PTT","price":1.}]})").value.has_value());
+
     const auto missing = deskduo::parseStocks(
         R"({"schemaVersion":1,"generatedAt":"2026-10-04T03:00:00Z","items":[{"symbol":"PTT","currency":"THB"}]})");
     CHECK(missing.value.has_value());
@@ -118,6 +160,12 @@ void weatherContract(const std::string& root) {
     const auto simulated = deskduo::parseWeather(readFile(root + "/examples/weather-response.json"), source);
     CHECK(simulated.value.has_value());
     CHECK(simulated.value->hourlyCount == 4U);
+    CHECK(!deskduo::parseWeather(R"({})", source).value.has_value());
+    CHECK(!deskduo::parseWeather(R"({"error":true,"reason":"invalid location"})", source).value.has_value());
+    const auto explicitNoError = deskduo::parseWeather(
+        R"({"error":false,"current":{"temperature_2m":1}})", source);
+    CHECK(explicitNoError.value.has_value());
+    CHECK(explicitNoError.value->temperature.has_value());
 
     const auto weather = deskduo::parseWeather(
         R"({"current":{"temperature_2m":0,"relative_humidity_2m":0,"weather_code":0,"time":"2026-10-04T12:00","rain_probability":0},"utc_offset_seconds":25200,"hourly":{"time":["2026-10-04T12:00","2026-10-04T13:00","2026-10-04T14:00","2026-10-04T15:00"],"temperature_2m":[0,-1,2,3],"precipitation_probability":[0,10,20,30]}})", source);
@@ -186,6 +234,23 @@ void configContract(const std::string& root) {
     CHECK(first.value->weather.refreshSeconds == 600U);
     CHECK(first.value->weather.fields.at("temperature") == "current.temperature_2m");
     CHECK(first.value->touch.swapAxes);
+
+    CHECK(!deskduo::applyConfigPatch(config, std::string(8193, ' ')).value.has_value());
+    std::string maximumUrl = "https://w.example/";
+    maximumUrl += std::string(1020 - maximumUrl.size(), 'a');
+    CHECK(maximumUrl.size() == 1020U);
+    const auto fullWeatherPatch = deskduo::applyConfigPatch(config, escapedHeaderPatch("weather", maximumUrl));
+    CHECK(fullWeatherPatch.value.has_value());
+    const auto fullStocksPatch = deskduo::applyConfigPatch(*fullWeatherPatch.value, escapedHeaderPatch("stocks", maximumUrl));
+    CHECK(fullStocksPatch.value.has_value());
+    const std::string maximalStored = deskduo::serializeConfig(*fullStocksPatch.value);
+    CHECK(maximalStored.size() > 8192U);
+    CHECK(maximalStored.size() <= 32768U);
+    const auto maximalRestore = deskduo::parseStoredConfig(maximalStored);
+    CHECK(maximalRestore.value.has_value());
+    CHECK(maximalRestore.value->weather.headers.size() == 6U);
+    CHECK(maximalRestore.value->weather.headers.at("X-0") == std::string(256, '"'));
+    CHECK(maximalRestore.value->stocks.headers.at("X-5") == std::string(256, '"'));
     const auto partial = deskduo::applyConfigPatch(*first.value, R"({"weather":{"label":"Forecast"}})");
     CHECK(partial.value.has_value());
     CHECK(partial.value->ssid == "home");
@@ -278,6 +343,15 @@ void modelContract() {
     snapshot = model.snapshot(3001);
     CHECK(!snapshot.weather.unknown);
     CHECK(!snapshot.weather.stale);
+    const auto errorEnvelope = deskduo::parseWeather(
+        R"({"error":true,"reason":"invalid location"})", currentConfig.weather);
+    CHECK(!errorEnvelope.value.has_value());
+    model.markFailed("weather", currentGen);
+    snapshot = model.snapshot(3002);
+    CHECK(!snapshot.weather.unknown);
+    CHECK(snapshot.weather.stale);
+    CHECK(snapshot.weather.data->temperature.has_value());
+    CHECK(closeTo(*snapshot.weather.data->temperature, 22.0));
 
     currentConfig.weather.url = "https://weather.example/new";
     model.applyConfig(currentConfig);

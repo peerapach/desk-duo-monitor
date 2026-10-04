@@ -19,7 +19,7 @@ struct ParseResult {
 
 struct UsageWindow {
     double usedPercent = 0.0;
-    std::optional<uint32_t> windowMinutes;
+    std::optional<double> windowMinutes;  // Positive finite minutes; fractional values are preserved.
     std::optional<int64_t> resetsAt;  // UTC epoch seconds.
 };
 
@@ -110,9 +110,9 @@ ParseResult<Stocks> parseStocks(const std::string& json);
 ParseResult<Weather> parseWeather(const std::string& json, const SourceConfig& source);
 
 Config defaultConfig();
-ParseResult<Config> applyConfigPatch(const Config& current, const std::string& json);
-ParseResult<Config> parseStoredConfig(const std::string& json);
-std::string serializeConfig(const Config& config);  // Internal persistence only.
+ParseResult<Config> applyConfigPatch(const Config& current, const std::string& json);  // Public request limit: 8 KiB.
+ParseResult<Config> parseStoredConfig(const std::string& json);  // Internal JSON limit: 32 KiB.
+std::string serializeConfig(const Config& config);  // Internal persistence only; empty for invalid/oversize config.
 std::string redactedConfig(const Config& config);  // Public authenticated settings representation.
 
 class Model {
