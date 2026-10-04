@@ -13,6 +13,7 @@ namespace deskduo {
 namespace {
 Config config;
 Model model;
+DisplayPreference displayPreference;
 SemaphoreHandle_t mutex;
 SemaphoreHandle_t writer;
 class Lock {
@@ -58,6 +59,11 @@ void runtime_init() {
         ESP_ERROR_CHECK(saved.value ? ESP_OK : ESP_ERR_INVALID_STATE);
         config = std::move(*saved.value);
     } else ESP_ERROR_CHECK(result == ESP_ERR_NVS_NOT_FOUND ? ESP_OK : result);
+    uint8_t savedMode = 0;
+    result = nvs_get_u8(handle, "codex_layout", &savedMode);
+    ESP_ERROR_CHECK(result == ESP_ERR_NVS_NOT_FOUND ? ESP_OK : result);
+    ESP_ERROR_CHECK(savedMode <= 1 ? ESP_OK : ESP_ERR_INVALID_STATE);
+    displayPreference.initialize(static_cast<CodexUsageMode>(savedMode));
     nvs_close(handle);
     bool changed = false;
     // Enable the documented internal entropy source before Wi-Fi starts.
@@ -87,6 +93,18 @@ int runtime_patch(const std::string& json) {
     if (!completeSerialization(*parsed.value, encoded) || !persist(encoded)) return 503;
     { Lock lock(mutex); config = std::move(*parsed.value); model.applyConfig(config); }
     return 204;
+}
+CodexUsageMode runtime_display_mode() { return displayPreference.get(); }
+int runtime_display_patch(const std::string& json) {
+    Lock oneWriter(writer);
+    return displayPreference.patch(json, [](CodexUsageMode mode) {
+        nvs_handle_t handle;
+        if (nvs_open("deskduo", NVS_READWRITE, &handle) != ESP_OK) return false;
+        const bool ok = nvs_set_u8(handle, "codex_layout", static_cast<uint8_t>(mode)) == ESP_OK &&
+            nvs_commit(handle) == ESP_OK;
+        nvs_close(handle);
+        return ok;
+    });
 }
 void runtime_usage(const Usage& usage) { model.acceptUsage(usage, now_ms()); }
 void runtime_weather(const ParseResult<Weather>& value, uint64_t generation) {

@@ -68,6 +68,10 @@ void esp_restart(){throw Reboot{};}
 namespace deskduo {
 extern const char portal_html[]="test page";
 RequestConfig runtime_config(){auto c=defaultConfig();c.setupPassword="test-admin";c.usageToken="test-usage-token-123";return {c,0};}
+DisplayPreference displayPreference;
+bool displaySave=true;
+CodexUsageMode runtime_display_mode(){return displayPreference.get();}
+int runtime_display_patch(const std::string& json){return displayPreference.patch(json,[](CodexUsageMode){return displaySave;});}
 int runtime_patch(const std::string&){++patches;return 204;}
 void runtime_usage(const Usage&){++usage;}
 uint64_t now_ms(){return clockMs;}
@@ -75,7 +79,14 @@ std::string input_diagnostics_json(){return R"({"sequence":19,"lastPollTimeMs":2
 }
 int main(int argc,char**){
     using namespace deskduo;
-    portal_init();assert(routes.size()==7);
+    portal_init();assert(routes.size()==9);
+    assert(serverConfig.max_uri_handlers>=9);
+    for(auto method:{HTTP_GET,HTTP_POST}){
+      for(auto credential:{"","Bearer test-usage-token-123","Basic wrong"}){
+        auto e=exchange();e.headers["Authorization"]=credential;auto r=request(e,"/api/display",method);
+        assert(dispatch(r)==ESP_FAIL && e.status=="401 Unauthorized" && e.reads==0);
+      }
+    }
     assert(routes.count({"/api/touch",HTTP_GET}) && !routes.count({"/api/touch",HTTP_POST}));
     for(auto credential:{"","Bearer test-usage-token-123","Basic wrong"}) {
         auto e=exchange();e.headers["Authorization"]=credential;auto r=request(e,"/api/touch",HTTP_GET);
@@ -85,6 +96,27 @@ int main(int argc,char**){
      assert(dispatch(r)==ESP_OK && e.status=="200 OK" && e.reads==0);
      assert(e.response==R"({"sequence":19,"lastPollTimeMs":20,"lastPressure":0,"pressureAccepted":false,"samples":[{"sequence":18,"timeMs":19,"rawX":123,"rawY":456,"pressure":200,"x":7,"y":8}]})");
      assert(patches==0 && usage==0);}
+
+    {
+        auto e=exchange();auto r=request(e,"/api/display",HTTP_GET);
+        assert(dispatch(r)==ESP_OK && e.response==R"({"codexUsageMode":"both"})");
+        e=exchange();e.headers["Content-Type"]="application/json";e.body=R"({"codexUsageMode":"weekly"})";r=request(e,"/api/display");
+        assert(dispatch(r)==ESP_OK && e.status=="204 No Content");
+        e=exchange();r=request(e,"/api/display",HTTP_GET);
+        assert(dispatch(r)==ESP_OK && e.response==R"({"codexUsageMode":"weekly"})");
+        displaySave=false;e=exchange();e.headers["Content-Type"]="application/json";e.body=R"({"codexUsageMode":"both"})";r=request(e,"/api/display");
+        assert(dispatch(r)==ESP_FAIL && e.status=="503 Service Unavailable");
+        assert(runtime_display_mode()==CodexUsageMode::Weekly);displaySave=true;
+        for(auto bad:{"{}",R"({"codexUsageMode":"invalid"})",R"({"codexUsageMode":"both","other":0})",R"({"codexUsageMode":"both","codexUsageMode":"weekly"})",R"({"codexUsageMode":"both"} garbage)"}){
+            e=exchange();e.headers["Content-Type"]="application/json";e.body=bad;r=request(e,"/api/display");
+            assert(dispatch(r)==ESP_FAIL && e.status=="400 Bad Request");assert(runtime_display_mode()==CodexUsageMode::Weekly);
+        }
+        e=exchange();e.headers["Content-Type"]="application/json";e.body=std::string(513,' ');r=request(e,"/api/display");
+        assert(dispatch(r)==ESP_FAIL && e.status=="413 Content Too Large" && e.reads==0);
+        e=exchange();e.headers["Content-Type"]="application/json";e.body=R"({"codexUsageMode":"both"})";e.body.resize(512,' ');r=request(e,"/api/display");
+        assert(dispatch(r)==ESP_OK && e.status=="204 No Content");
+        assert(patches==0 && usage==0);
+    }
 
     if(argc>1) {
         auto active=exchange();Exchange idle1,idle2,idle3;auto status=exchange(),usageClient=exchange();
@@ -117,6 +149,7 @@ int main(int argc,char**){
     assert(dispatch(upload)==ESP_OK && ota_busy() && bad.reads==0);
     {auto e=exchange();auto r=request(e);assert(dispatch(r)==ESP_FAIL && e.status=="503 Service Unavailable" && !e.reads);}
     {auto e=exchange();auto r=request(e,"/api/config");assert(dispatch(r)==ESP_FAIL && e.status=="503 Service Unavailable" && patches==0 && !e.reads);}
+    {auto e=exchange();auto r=request(e,"/api/display");assert(dispatch(r)==ESP_FAIL && e.status=="503 Service Unavailable" && !e.reads);}
     {auto e=exchange();auto r=request(e,"/api/firmware",HTTP_GET);assert(dispatch(r)==ESP_OK && e.response.find("\"busy\":true")!=std::string::npos && e.response.find("ota_0")!=std::string::npos);}
     {auto e=exchange();e.headers["Authorization"]="Bearer test-usage-token-123";e.headers["Content-Type"]="application/json";e.body=R"({"schemaVersion":1,"type":"usage","provider":"claude","updatedAt":"2026-10-04T03:00:00Z","primary":{"usedPercent":10,"windowMinutes":300,"resetsAt":"2026-10-04T08:00:00Z"}})";auto r=request(e,"/api/usage");dispatch(r);assert(e.reads>0 && e.status=="204 No Content" && usage==1);}
     runWorker();assert(!ota_busy() && completed==asyncCount && aborted==1 && selected==0 && bad.status=="408 Request Timeout");

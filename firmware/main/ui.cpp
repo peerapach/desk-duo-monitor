@@ -24,6 +24,7 @@ lv_obj_t* captions[4]{};
 lv_obj_t* currencies[3]{};
 int page=0;
 bool setup=false;
+CodexUsageMode displayMode=CodexUsageMode::Both;
 uint64_t rotated=0, refreshed=0, holdUntil=0;
 lv_obj_t* label(lv_obj_t* parent,int x,int y,int width,const std::string& value,bool large=false) {
     auto* obj=lv_label_create(parent);
@@ -75,9 +76,10 @@ std::string concise(double value) {
     }
     return result;
 }
-std::string windowLabel(const std::optional<UsageWindow>& window) {
+std::string windowLabel(const std::optional<UsageWindow>& window,bool codex=false) {
     if(!window || !window->windowMinutes) return "window --";
     const double minutes=*window->windowMinutes;
+    if(codex && minutes==10080) return "Weekly";
     if(std::fmod(minutes,1440)==0) return concise(minutes/1440)+"d";
     if(std::fmod(minutes,60)==0) return concise(minutes/60)+"h";
     return concise(minutes)+"m";
@@ -123,7 +125,7 @@ void buildPage() {
     }
     if(setup) {
         auto cfg=runtime_config().config;
-        label(content,10,4,220,"ตั้งค่า Pocket Studio");
+        label(content,10,4,220,"ตั้งค่า Desk Duo");
         label(content,10,32,220,ap_name());
         label(content,10,56,220,"AP / admin: "+cfg.setupPassword);
         label(content,10,82,220,"http://192.168.4.1");
@@ -165,7 +167,7 @@ void buildPage() {
         }
         rule(content,10,115,220);
     } else {
-        mascot[0]=sprite(0,9,197,true); mascot[1]=sprite(1,48,197,true);
+        if(page==2) { mascot[0]=sprite(0,9,197,true); mascot[1]=sprite(1,48,197,true); }
         values[15]=metric(92,213,138,"unknown",dim);
         lv_obj_set_style_text_align(values[15],LV_TEXT_ALIGN_RIGHT,0);
         if(page==1) {
@@ -215,7 +217,7 @@ void ui_init() {
     text12.line_height=ct_font_thai_12.line_height; text12.base_line=ct_font_thai_12.base_line;
     screen=lv_screen_active(); lv_obj_set_style_bg_color(screen,lv_color_hex(black),0);
     lv_obj_set_style_text_color(screen,lv_color_hex(ink),0); lv_obj_remove_flag(screen,LV_OBJ_FLAG_SCROLLABLE);
-    auto* title=label(screen,10,1,160,"pocket studio"); lv_obj_set_style_text_font(title,&lv_font_montserrat_14,0);
+    auto* title=label(screen,10,1,160,"Desk Duo"); lv_obj_set_style_text_font(title,&lv_font_montserrat_14,0);
     clockLabel=label(screen,185,3,45,"--:--"); lv_obj_set_style_text_font(clockLabel,&lv_font_montserrat_12,0);
     lv_obj_set_style_text_align(clockLabel,LV_TEXT_ALIGN_RIGHT,0); rule(screen,10,23,220);
     ipLabel=label(screen,0,259,240,station_address()); lv_obj_set_style_text_font(ipLabel,&lv_font_montserrat_12,0);
@@ -243,6 +245,8 @@ void ui_init() {
     setup=runtime_config().config.ssid.empty(); rotated=now_ms(); buildPage();
 }
 void ui_tick() {
+    const auto nextMode=runtime_display_mode();
+    if(nextMode!=displayMode) { displayMode=nextMode; refreshed=0; }
     const auto now=now_ms(); static uint64_t pressStart=0;
     if(!gpio_get_level(GPIO_NUM_0)) { if(!pressStart)pressStart=now; }
     else if(pressStart) { if(now-pressStart>=80)switchPage(page,true,!setup); pressStart=0; }
@@ -265,12 +269,19 @@ void ui_tick() {
     if(page==0) {
         for(int p=0;p<2;++p) {
             const auto& src=p?snapshot.codex:snapshot.claude;
-            text(values[p*6],age(src));
+            const bool weekly=p==1 && displayMode==CodexUsageMode::Weekly;
+            auto selected=weekly && src.data?codexWeeklyWindow(*src.data):std::nullopt;
+            text(values[p*6],weekly && !selected?"unknown":age(src));
+            for(auto* unused:{values[p*6+3],values[p*6+4],bars[p*2+1]}) {
+                if(weekly)lv_obj_add_flag(unused,LV_OBJ_FLAG_HIDDEN);
+                else lv_obj_remove_flag(unused,LV_OBJ_FLAG_HIDDEN);
+            }
             std::optional<UsageWindow> primary,secondary;
             if(src.data) { primary=src.data->primary; secondary=src.data->secondary; }
+            if(weekly) primary=selected;
             text(values[p*6+1],primary?concise(primary->usedPercent)+"%":"--");
-            text(values[p*6+2],windowLabel(primary)+" reset "+stamp(primary?primary->resetsAt:std::nullopt,true));
-            text(values[p*6+3],windowLabel(secondary)+"  "+(secondary?concise(secondary->usedPercent)+"%":"--"));
+            text(values[p*6+2],(weekly?"Weekly":windowLabel(primary,p==1))+" reset "+stamp(primary?primary->resetsAt:std::nullopt,true));
+            text(values[p*6+3],windowLabel(secondary,p==1)+"  "+(secondary?concise(secondary->usedPercent)+"%":"--"));
             text(values[p*6+4],"reset "+stamp(secondary?secondary->resetsAt:std::nullopt,true));
             for(int k=0;k<2;++k) { const auto& w=k?secondary:primary; lv_bar_set_value(bars[p*2+k],w?static_cast<int>(w->usedPercent):0,LV_ANIM_OFF); }
         }

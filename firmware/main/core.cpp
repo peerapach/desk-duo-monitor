@@ -932,6 +932,19 @@ void accept(SourceSnapshot<T>& target, const T& data, uint64_t nowMs) {
 
 }  // namespace
 
+ParseResult<CodexUsageMode> parseDisplayPreference(const std::string& json) {
+    auto parsed = parseJson(json, 512);
+    if (!parsed.root) return {std::nullopt, parsed.error};
+    const auto* root = parsed.root.get();
+    if (!cJSON_IsObject(root) || !root->child || root->child->next ||
+        std::strcmp(root->child->string, "codexUsageMode") != 0 || !cJSON_IsString(root->child))
+        return {std::nullopt, "display"};
+    const std::string mode = root->child->valuestring;
+    if (mode == "both") return {CodexUsageMode::Both, {}};
+    if (mode == "weekly") return {CodexUsageMode::Weekly, {}};
+    return {std::nullopt, "display"};
+}
+
 ParseResult<Usage> parseUsage(const std::string& json) {
     ParsedJson parsed = parseJson(json, kUsageBodyLimit);
     if (!parsed.root) return failure<Usage>(parsed.error.c_str());

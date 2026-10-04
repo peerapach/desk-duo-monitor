@@ -6,4 +6,7 @@
 #define LV_FONT_MONTSERRAT_18 1
 #define LV_FONT_MONTSERRAT_24 1
 #define LV_FONT_MONTSERRAT_32 1
-#define LV_USE_LOG 0
+#define LV_USE_LOG 1
+#define LV_LOG_PRINTF 1
+#define LV_ASSERT_HANDLER_INCLUDE <stdlib.h>
+#define LV_ASSERT_HANDLER abort();

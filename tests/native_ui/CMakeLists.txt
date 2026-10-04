@@ -15,3 +15,5 @@ target_link_libraries(preview PRIVATE lvgl)
 target_compile_options(preview PRIVATE -UNDEBUG)
 enable_testing()
 add_test(NAME ui_preview COMMAND preview)
+
+set_tests_properties(ui_preview PROPERTIES TIMEOUT 30)

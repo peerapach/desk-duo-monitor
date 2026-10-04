@@ -30,6 +30,19 @@ struct Usage {
     std::optional<UsageWindow> secondary;
 };
 
+enum class CodexUsageMode : uint8_t { Both = 0, Weekly = 1 };
+ParseResult<CodexUsageMode> parseDisplayPreference(const std::string& json);
+
+// Return source telemetry unchanged; manual weekly mode can classify only
+// an undated secondary, or an undated primary when it is the sole window.
+inline std::optional<UsageWindow> codexWeeklyWindow(const Usage& usage) {
+    if (usage.primary && usage.primary->windowMinutes == 10080) return usage.primary;
+    if (usage.secondary && usage.secondary->windowMinutes == 10080) return usage.secondary;
+    if (usage.secondary && !usage.secondary->windowMinutes) return usage.secondary;
+    if (usage.primary && !usage.secondary && !usage.primary->windowMinutes) return usage.primary;
+    return std::nullopt;
+}
+
 struct Stock {
     std::string symbol;
     std::string label;

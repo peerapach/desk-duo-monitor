@@ -1,5 +1,6 @@
 #pragma once
 #include "core.hpp"
+#include <atomic>
 namespace deskduo {
 // Verify the actual serialized result restores every intended field, including
 // secrets. A nonempty cJSON print alone does not prove all allocations succeeded.
@@ -18,6 +19,22 @@ inline bool completeSerialization(const Config& expected, const std::string& jso
         a.swapAxes == b.swapAxes && a.invertX == b.invertX && a.invertY == b.invertY &&
         a.minX == b.minX && a.maxX == b.maxX && a.minY == b.minY && a.maxY == b.maxY;
 }
+// The caller serializes writers; readers never perform NVS I/O.
+class DisplayPreference {
+    std::atomic<CodexUsageMode> mode_{CodexUsageMode::Both};
+public:
+    CodexUsageMode get() const { return mode_.load(); }
+    void initialize(CodexUsageMode mode) { mode_.store(mode); }
+    template<typename Persist> int patch(const std::string& json, Persist persist) {
+        auto parsed = parseDisplayPreference(json);
+        if (!parsed.value) return 400;
+        if (!persist(*parsed.value)) return 503;
+        mode_.store(*parsed.value);
+        return 204;
+    }
+};
+CodexUsageMode runtime_display_mode();
+int runtime_display_patch(const std::string& json);
 struct RequestConfig { Config config; uint64_t generation; };
 void runtime_init();
 RequestConfig runtime_config();

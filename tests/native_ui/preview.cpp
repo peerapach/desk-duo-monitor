@@ -15,6 +15,8 @@ uint64_t clockMs=2000;
 namespace deskduo {
 Config cfg;
 Snapshot data;
+CodexUsageMode mode=CodexUsageMode::Both;
+CodexUsageMode runtime_display_mode(){return mode;}
 uint64_t now_ms(){return clockMs;}
 RequestConfig runtime_config(){return {cfg,0};}
 Snapshot runtime_snapshot(){return data;}
@@ -22,7 +24,7 @@ std::string ap_name(){return "DeskDuo-DEMO01";}
 std::string station_address(){return "192.0.2.10";}
 }
 uint8_t frame[240*320*3]{};
-uint8_t buffer[240*24*3];
+alignas(LV_DRAW_BUF_ALIGN) uint8_t buffer[240*24*3];
 void capture(const char* name){
     deskduo::ui_tick();lv_refr_now(nullptr);
     std::ofstream f(name,std::ios::binary);f<<"P6\n240 320\n255\n";f.write((char*)frame,sizeof(frame));
@@ -101,7 +103,7 @@ int main(){
         assert(pointerClicks[i]==3 && "real LVGL pointer must click icon area");
         pointerTapAt((c.x1+c.x2)/2,(c.y1+c.y2)/2);
         assert(pointerClicks[i]==4 && "real LVGL pointer must click caption area");
-        const char* pageMarkers[]={"Claude","--°C","หุ้น / Watchlist","ตั้งค่า Pocket Studio"};
+        const char* pageMarkers[]={"Claude","--°C","หุ้น / Watchlist","ตั้งค่า Desk Duo"};
         assert(findLabel(navScreen,deskduo::shapeText(pageMarkers[i]).c_str()) && "pointer clicks must select the requested page");
     }
     pointerTapAt(30,284);
@@ -127,6 +129,35 @@ int main(){
     for(int k=0;k<5;++k){stocks.items[k].symbol=k==0?"AAPL":k==1?"NVDA":"MSFT";stocks.items[k].price=k==4?1e300:225.40+k;stocks.items[k].changePercent=k%2?-1.24:2.81;stocks.items[k].label="หุ้นจำลอง";stocks.items[k].currency="USD";stocks.items[k].quotedAt=1791097200+k*60;}
     data.stocks.data=stocks;data.stocks.unknown=false;
     clockMs=4000;capture("duo.ppm");
+    assert(findLabel(lv_screen_active(),"7d  48%"));
+    assert(findLabel(lv_screen_active(),"Weekly  21%"));
+    // Runtime preference changes must update actual LVGL objects immediately,
+    // preserve the selected window's reset, and hide all unused Codex objects.
+    auto countVisible=[](auto&& self,lv_obj_t* parent,const lv_obj_class_t* cls)->unsigned{
+        if(lv_obj_has_flag(parent,LV_OBJ_FLAG_HIDDEN))return 0;
+        unsigned n=lv_obj_check_type(parent,cls)?1:0;
+        for(uint32_t i=0;i<lv_obj_get_child_count(parent);++i)n+=self(self,lv_obj_get_child(parent,i),cls);
+        return n;
+    };
+    deskduo::mode=deskduo::CodexUsageMode::Weekly;clockMs+=20;capture("duo-weekly.ppm");
+    assert(findLabel(lv_screen_active(),"21%"));
+    auto* weeklyReset=findLabel(lv_screen_active(),"Weekly reset 07/10 14:00");assert(weeklyReset);
+    assert(countVisible(countVisible,lv_screen_active(),&lv_bar_class)==3);
+    assert(lv_obj_has_flag(findLabel(lv_screen_active(),"Weekly  21%"),LV_OBJ_FLAG_HIDDEN));
+    data.codex.data->primary=deskduo::UsageWindow{73.25,10080,4102444800};data.codex.data->secondary.reset();
+    clockMs+=1000;capture("duo-weekly-primary.ppm");
+    assert(findLabel(lv_screen_active(),"73.25%"));assert(findLabel(lv_screen_active(),"Weekly reset 01/01 07:00"));
+    data.codex.data->primary->windowMinutes=300;clockMs+=1000;capture("duo-weekly-unavailable.ppm");
+    assert(findLabel(lv_screen_active(),"Weekly reset --"));assert(!findLabel(lv_screen_active(),"73.25%"));
+    data.codex.data->primary->windowMinutes.reset();clockMs+=1000;deskduo::ui_tick();
+    assert(findLabel(lv_screen_active(),"73.25%"));assert(findLabel(lv_screen_active(),"Weekly reset 01/01 07:00"));
+    deskduo::mode=deskduo::CodexUsageMode::Both;clockMs+=20;deskduo::ui_tick();
+    assert(countVisible(countVisible,lv_screen_active(),&lv_bar_class)==4);
+    assert(findLabel(lv_screen_active(),"window -- reset 01/01 07:00"));
+    data.codex.data->primary=deskduo::UsageWindow{58,90.5,4102444800};
+    data.codex.data->secondary=deskduo::UsageWindow{21,2.5,4102531200};clockMs+=1000;deskduo::ui_tick();
+    assert(findLabel(lv_screen_active(),"90.5m reset 01/01 07:00"));assert(findLabel(lv_screen_active(),"2.5m  21%"));
+    data.codex.data=usage;
     data.claude.data->primary=deskduo::UsageWindow{99.99,90.5,4102444800};
     data.claude.data->secondary=deskduo::UsageWindow{73.25,2.5,4102531200};
     data.claude.stale=true;clockMs+=1000;capture("duo-stale-long-reset.ppm");

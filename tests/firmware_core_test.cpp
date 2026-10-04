@@ -550,6 +550,36 @@ int main(int argc, char** argv) {
         CHECK(!deskduo::completeSerialization(intended, "{}"));
         CHECK(!deskduo::completeSerialization(intended, ""));
         CHECK(deskduo::completeSerialization(intended, deskduo::serializeConfig(intended)));
+        // Rejecting invalid preferences must never write; failed commit must
+        // retain the active view; successful commit must precede publication.
+        deskduo::DisplayPreference preference;
+        using Mode = deskduo::CodexUsageMode;
+        CHECK(preference.get() == Mode::Both);
+        int writes=0;
+        for(const auto& bad:std::vector<std::string>{"{}", "[]", "null", R"({"codexUsageMode":"5h"})", R"({"codexUsageMode":1})", R"({"codexUsageMode":"weekly","extra":true})", R"({"codexUsageMode":"both","codexUsageMode":"weekly"})", R"({"codexUsageMode":"weekly"}x)", std::string(513,' '), std::string(40,'[')+std::string(40,']')}) {
+            CHECK(preference.patch(bad,[&](Mode){++writes;return true;}) == 400);
+        }
+        CHECK(writes == 0);
+        CHECK(preference.patch(R"({"codexUsageMode":"weekly"})",[&](Mode next){++writes;CHECK(next == Mode::Weekly);CHECK(preference.get() == Mode::Both);return false;}) == 503);
+        CHECK(preference.get() == Mode::Both);
+        CHECK(preference.patch(R"({"codexUsageMode":"weekly"})",[&](Mode next){++writes;CHECK(next == Mode::Weekly);CHECK(preference.get() == Mode::Both);return true;}) == 204);
+        CHECK(preference.get() == Mode::Weekly);
+        CHECK(preference.patch(R"({"codexUsageMode":"both"})",[&](Mode){CHECK(preference.get() == Mode::Weekly);return true;}) == 204);
+        CHECK(preference.get() == Mode::Both);
+        deskduo::Usage selected;
+        selected.primary=deskduo::UsageWindow{15,300,4102444800};
+        selected.secondary=deskduo::UsageWindow{63,10080,4102531200};
+        auto weekly=deskduo::codexWeeklyWindow(selected);
+        CHECK(weekly && weekly->usedPercent==63 && weekly->resetsAt==4102531200);
+        selected.primary->windowMinutes=10080;CHECK(deskduo::codexWeeklyWindow(selected)->usedPercent==15);
+        selected.primary->windowMinutes=300;selected.secondary->windowMinutes.reset();
+        CHECK(deskduo::codexWeeklyWindow(selected)->usedPercent==63);
+        selected.secondary->windowMinutes=90.5;CHECK(!deskduo::codexWeeklyWindow(selected));
+        selected.secondary.reset();CHECK(!deskduo::codexWeeklyWindow(selected));
+        selected.primary->windowMinutes.reset();CHECK(deskduo::codexWeeklyWindow(selected)->usedPercent==15);
+        selected.secondary=deskduo::UsageWindow{12,300,{}};CHECK(!deskduo::codexWeeklyWindow(selected));
+        selected.primary.reset();selected.secondary->windowMinutes=10080;CHECK(deskduo::codexWeeklyWindow(selected)->usedPercent==12);
+        selected.secondary.reset();CHECK(!deskduo::codexWeeklyWindow(selected));
         usageContract(root);
         stocksContract(root);
         weatherContract(root);

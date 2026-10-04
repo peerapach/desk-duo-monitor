@@ -38,6 +38,12 @@ Package สร้าง `artifacts/desk-duo-cyd.bin`, `.sha256`, `.json`, `desk-
 
 ตั้ง Wi-Fi, URL อากาศ/หุ้น, headers แบบ JSON, field mappings, refresh 30–86400 วินาที, auto rotation 0/ปิด หรือ 5–300 วินาที และ token จาก portal ค่า SSID/password/token/URL/headers ที่เว้นว่างจะคงค่าเดิม การล้าง Wi-Fi หรือ URL ต้องเลือกช่องล้าง; headers `{}` คือล้างทั้งหมด GET settings แสดง URL ที่ตัด query และไม่แสดง SSID/password/token/headers จึงไม่ใช้ URL ที่เห็นนั้นเขียนกลับอัตโนมัติ
 
+เลือกการแสดง usage ของ Codex ในฟอร์มแยก: `5h + Weekly` (ค่าเริ่มต้น) หรือ `Weekly อย่างเดียว` บันทึกแล้วจอเปลี่ยนทันทีโดยไม่ reboot ฟอร์มนี้ไม่เปลี่ยน Wi-Fi/แหล่งข้อมูล/ค่าลับ และยังกดบันทึกไม่ได้จนโหลดค่าปัจจุบันสำเร็จ
+
+`GET /api/display` และ `POST /api/display` ใช้ Basic admin เท่านั้น POST รับ JSON ไม่เกิน 512 bytes เช่น `{"codexUsageMode":"weekly"}` โดยต้องมี field นี้เพียง field เดียว ค่า `both` หรือ `weekly` เท่านั้น Settings admission เดิมปิดการบันทึกระหว่าง OTA (HTTP503) ค่านี้เก็บแยกใน NVS namespace `deskduo`, scalar key `codex_layout`; ถ้า key ไม่มีใช้ `both` โดยไม่เขียนค่าเริ่มต้น รูปแบบ config blob เดิมไม่เปลี่ยนเพื่อให้ firmware เก่าอ่านต่อได้ Commit ต้องสำเร็จก่อนเปลี่ยนค่าที่จอใช้งาน
+
+โหมดทั้งสองแสดง duration/reset ตามข้อมูลจริง และเรียกช่วง Codex 10080 นาทีว่า Weekly โหมด weekly เลือกช่วง 10080 นาทีจาก primary ก่อน secondary ถ้าไม่พบจึงยอมรับ secondary ที่ไม่มี duration หรือ primary ที่ไม่มี duration และเป็นช่วงเดียวตามการเลือกของผู้ใช้ ช่วงที่มี duration อื่นไม่ถูกเปลี่ยนชื่อเป็น weekly; ถ้าไม่มีช่วงที่เลือกได้แสดง unknown/-- พร้อมซ่อนค่า/reset/bar รองทั้งหมด ข้อมูล telemetry ไม่เปลี่ยน Claude แสดง duration ตามเดิม Weather ไม่มี mini sprites ส่วน Stocks คงภาพคู่หูขนาดเล็กไว้
+
 บันทึกผ่าน validation และ round-trip ครบทุก field ลง NVS blob ก่อนเปลี่ยน active config (partition 88 KiB รองรับค่าเก่าและค่าใหม่ระหว่าง commit) ถ้า flash save ล้มเหลวได้ HTTP503 และค่าเดิมยังทำงาน Restart ปกติเก็บค่าเดิม หาก NVS มีข้อมูลเสีย firmware หยุดแทนการล้าง secrets โดยอัตโนมัติ
 
 ## Usage จาก Mac

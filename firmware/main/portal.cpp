@@ -49,6 +49,8 @@ esp_err_t route(httpd_req_t* request) {
             return respond(request, 200, portal_html);
         }
         httpd_resp_set_type(request, "application/json");
+        if (path == "/api/display") return respond(request, 200,
+            runtime_display_mode() == CodexUsageMode::Weekly ? "{\"codexUsageMode\":\"weekly\"}" : "{\"codexUsageMode\":\"both\"}");
         if (path == "/api/touch") return respond(request, 200, input_diagnostics_json());
         return respond(request, 200, path == "/api/firmware" ? ota_status_json() : redactedConfig(config));
     }
@@ -56,7 +58,7 @@ esp_err_t route(httpd_req_t* request) {
     // Reserve settings maintenance before body receive; usage remains available.
     MaintenanceLease lease(usage ? Maintenance::Idle : Maintenance::Settings);
     if (!usage && !lease) return respond(request, 503, "Firmware maintenance busy; retry shortly");
-    int policy = bodyPolicy(request->content_len, header(request, "Content-Type", 128), usage ? 4096 : 8192);
+    int policy = bodyPolicy(request->content_len, header(request, "Content-Type", 128), usage ? 4096 : path == "/api/display" ? 512 : 8192);
     if (policy != 0) return respond(request, policy);
     // No chunked/unbounded request bodies; HTTP server supplies content_len.
     std::string body(request->content_len, '\0');
@@ -74,7 +76,7 @@ esp_err_t route(httpd_req_t* request) {
         runtime_usage(*parsed.value);
         return respond(request, 204);
     }
-    return respond(request, runtime_patch(body));
+    return respond(request, path == "/api/display" ? runtime_display_patch(body) : runtime_patch(body));
 }
 }
 void portal_init() {
@@ -83,15 +85,15 @@ void portal_init() {
     // IDF's LRU excludes for_async_req sessions, so idle clients can be
     // reclaimed for status/usage without evicting the active upload worker.
     settings.max_open_sockets = 4; settings.lru_purge_enable = true;
-    settings.max_uri_handlers = 8;
+    settings.max_uri_handlers = 10;
     settings.recv_wait_timeout = 1; settings.send_wait_timeout = 2;
     httpd_handle_t server;
     ESP_ERROR_CHECK(httpd_start(&server, &settings));
-    for (const auto& path : {"/", "/api/config", "/api/firmware", "/api/touch"}) {
+    for (const auto& path : {"/", "/api/config", "/api/firmware", "/api/touch", "/api/display"}) {
         httpd_uri_t uri{}; uri.uri = path; uri.method = HTTP_GET; uri.handler = route;
         ESP_ERROR_CHECK(httpd_register_uri_handler(server, &uri));
     }
-    for (const auto& path : {"/api/config", "/api/usage", "/api/firmware"}) {
+    for (const auto& path : {"/api/config", "/api/usage", "/api/firmware", "/api/display"}) {
         httpd_uri_t uri{}; uri.uri = path; uri.method = HTTP_POST; uri.handler = route;
         ESP_ERROR_CHECK(httpd_register_uri_handler(server, &uri));
     }
