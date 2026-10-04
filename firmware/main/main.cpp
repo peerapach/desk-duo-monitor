@@ -4,6 +4,7 @@
 #include "display.hpp"
 #include "input.hpp"
 #include "ui.hpp"
+#include "ota.hpp"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -20,7 +21,12 @@ extern "C" void app_main() {
     lv_tick_set_cb([]() -> uint32_t { return deskduo::now_ms(); });
     deskduo::display_init(); deskduo::input_init(); deskduo::ui_init();
     deskduo::network_init(); deskduo::portal_init();
-    assert(xTaskCreate(deskduo::network_task, "sources", 12288, nullptr, 4, nullptr) == pdPASS);
+    ESP_ERROR_CHECK(xTaskCreate(deskduo::network_task, "sources", 12288, nullptr, 4, nullptr) == pdPASS ? ESP_OK : ESP_ERR_NO_MEM);
     // This is the only task allowed to call LVGL, including timer_handler.
-    for (;;) { deskduo::ui_tick(); lv_timer_handler(); vTaskDelay(pdMS_TO_TICKS(20)); }
+    bool confirmed = false;
+    for (;;) {
+        deskduo::ui_tick(); lv_timer_handler();
+        if (!confirmed) { deskduo::ota_confirm_boot(); confirmed = true; }
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
 }

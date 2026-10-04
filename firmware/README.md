@@ -1,6 +1,6 @@
 # Desk Duo firmware (CYD แนวตั้ง)
 
-Source receiver และ build สำหรับ ESP32-2432S028R / ESP32-D0WD-V3 / flash 4 MiB / ไม่มี PSRAM จอ 240×320 ใช้ LVGL 9.2.2, ESP-IDF 5.5.3 ผ่าน espressif32 6.13.0 บอร์ดถูกถอดออกตลอดงานนี้: build และ native rendering ผ่าน แต่ยังไม่ได้ flash, ทดสอบจอ/สัมผัสจริง หรือเรียก endpoint จริงจากบอร์ด
+Source receiver และ build สำหรับ ESP32-2432S028R / ESP32-D0WD-V3 / flash 4 MiB / ไม่มี PSRAM จอ 240×320 ใช้ LVGL 9.2.2, ESP-IDF 5.5.3 ผ่าน espressif32 6.13.0 รองรับ OTA ภายในเครือข่ายด้วย Basic admin และ boot rollback; ผลทดสอบ hardware ต้องบันทึกแยกจาก build/native tests
 
 ## Build และตรวจสอบบน Mac
 
@@ -28,7 +28,7 @@ UI regression ใช้ runtime/GPIO จำลองและ `ui.cpp` จริ
 
 `scripts/pio.py` ใช้ system trust เฉพาะ process ของ build ไม่ปิด TLS verification ไม่เปลี่ยน Python หรือ CA ของระบบ ส่วน `.platformio/`, `firmware/.pio/`, `managed_components/` และ `artifacts/` ไม่ถูก commit; `dependencies.lock` pin component จริง
 
-Package สร้าง `artifacts/desk-duo-cyd.bin`, `.sha256`, `.json`, `desk-duo-app.bin` และ notices ตรวจ offset จาก metadata ของ build, factory partition, ขนาด, SHA256 และเทียบ bytes ของทั้งสามส่วนจริง ไม่มีคำสั่งเข้าถึง serial ใน script นี้
+Package สร้าง `artifacts/desk-duo-cyd.bin`, `.sha256`, `.json`, `desk-duo-app.bin` และ notices ตรวจ offset จาก metadata ของ build, dual OTA partition, ขนาด, SHA256, image checksum/identity และเทียบ bytes ของทั้งสี่ส่วนจริง ไม่มีคำสั่งเข้าถึง serial ใน script นี้
 
 ## ตั้งค่าหลังติดตั้งบนบอร์ดในอนาคต
 
@@ -82,23 +82,49 @@ LCD: SPI2 MOSI13 MISO12 CLK14 CS15 DC2 BL21, 40MHz, RGB565, partial buffer 240×
 
 ฟอนต์ไทย 12/14px และ shaping มาจาก tamaclaude, Latin fallback คือ Montserrat ตรวจ cmap จริงและเรนเดอร์ด้วย native LVGL แล้ว ข้อความนอก ASCII/Thai/degree ที่ไม่มี glyph แสดง `?` รายละเอียดและ notices อยู่ใน [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md)
 
-## สำรอง / upload ในอนาคตเท่านั้น
+## OTA และ USB migration ที่รักษาการตั้งค่า
 
-คำสั่งต่อไปนี้เป็นคู่มือสำหรับเมื่อเจ้าของพร้อมต่ออุปกรณ์ ยังไม่ได้รันในงานนี้ แทน `PORT` ด้วย serial port จริง และเริ่มที่ baud115200 ถ้าการสำรองเร็วกว่าเคยล้มเหลวให้ retry ที่115200 โดยไม่เขียน flash จนอ่านครบและตรวจขนาด/เก็บ hash ได้:
+Partition สำหรับ release 2.0.0: NVS `0x9000`/`0x16000`, PHY `0x1f000`/`0x1000` (ตำแหน่งและขนาดเดิม), OTA data `0x20000`/`0x2000`, OTA 0 `0x30000`/`0x1e0000`, OTA 1 `0x210000`/`0x1e0000`. NVS schema ไม่เปลี่ยน Wi-Fi/admin/usage token/endpoint/touch calibration จึงคงอยู่
 
-```sh
-rtk proxy .venv/bin/python .platformio/packages/tool-esptoolpy/esptool.py --chip esp32 --port PORT --baud 115200 read_flash 0 0x400000 .device-backups/original-4mb.bin
-rtk proxy shasum -a 256 .device-backups/original-4mb.bin
-```
+บอร์ดที่ใช้ factory layout เดิมต้อง migrate ทาง USB ครั้งเดียว โดยใช้ไฟล์แยกที่ตรวจสอบแล้ว **ห้ามเขียน merged `desk-duo-cyd.bin` ที่ 0x0 บนบอร์ดที่ตั้งค่าแล้ว** ภาพ merged สำหรับ initial install เท่านั้น และ padding จะล้างการตั้งค่าเดิม `scripts/package_firmware.py` สร้าง app-only, bootloader, partition table, erased OTA initialization, manifest และ merged image; ไม่เข้าถึง serial
 
-สร้าง directory `.device-backups` ก่อนสำรอง เก็บ backup ไว้นอก Git ภาพรวมเริ่ม offset0 สำหรับติดตั้งครั้งแรกจะเขียน padding ทับ NVS เดิม จึงต้องสำรองก่อน:
+เริ่มจาก dry run (ไม่เปิดอุปกรณ์แม้ระบุ `--port` หากยังไม่มี `--flash`):
 
 ```sh
-rtk proxy .venv/bin/python .platformio/packages/tool-esptoolpy/esptool.py --chip esp32 --port PORT --baud 115200 write_flash 0x0 artifacts/desk-duo-cyd.bin
+rtk proxy .venv/bin/python scripts/package_firmware.py
+rtk proxy .venv/bin/python scripts/migrate_ota.py
 ```
 
-สำหรับอัปเดต Desk Duo ที่ใช้ partition เดิมแล้ว ให้ใช้ application-only เพื่อรักษา NVS:
+ทั่วไป tool จะตรวจ chip/flash จริง แล้วอ่าน backup 4 MiB ใหม่ลง timestamp directory permission0700/ไฟล์0600 พร้อม SHA256 และ recovery metadata ก่อนเขียน segments:
 
 ```sh
-rtk proxy .venv/bin/python .platformio/packages/tool-esptoolpy/esptool.py --chip esp32 --port PORT --baud 115200 write_flash 0x20000 artifacts/desk-duo-app.bin
+rtk proxy .venv/bin/python scripts/migrate_ota.py --port PORT --flash
 ```
+
+**เจ้าของบอร์ดนี้ระบุไม่ให้สร้าง backup ใหม่** ใช้ override นี้ตามที่สั่ง; tool ไม่เรียก `read_flash` และไม่สร้าง backup:
+
+```sh
+rtk proxy .venv/bin/python scripts/migrate_ota.py --port PORT --flash --skip-backup
+```
+
+ทุกกรณีเขียนเฉพาะ bootloader `0x1000`, partitions `0x8000`, OTA data `0x20000` และ app `0x30000`; ตรวจ sector erase ranges ไม่ทับ NVS/PHY และให้ esptool verify หลังเขียน ไม่ใช้ erase_flash ไม่แก้ eFuse และไม่เปลี่ยน credentials
+
+หลัง migration เปิด portal ด้วย Basic admin เดิม เลือก `desk-duo-app.bin` แล้วกด Upload firmware เอง ไม่ upload เมื่อเลือกไฟล์ทันที Progress100% หมายถึงส่งข้อมูลครบและยังรอ SDK ตรวจ image; หลังรับรองแล้วจึง restart และลอง reconnect ไม่เกิน30ครั้ง (แต่ละ fetch timeout2s, พัก2s) ถ้าไม่ยืนยัน slot ใหม่ให้ตรวจจอ/โหลดหน้าใหม่ ไม่รายงานสำเร็จล่วงหน้า
+
+API: `GET /api/firmware` ต้องใช้ Basic admin และคืน version, capacity, busy, runningPartition และ bootState (ESP-IDF enum) ไม่มี secrets. `POST /api/firmware` เป็น application-only binary ต้องใช้ Basic admin, `Content-Type: application/octet-stream`, `X-DeskDuo-Update: 1`, fixed positive Content-Length ภายใน slot; bearer usage token ไม่มีสิทธิ์ Origin ถ้ามีต้องเท่ากับ `http://` + Host แบบตรงตัว ไม่มี permissive CORS. SDK ตรวจ ESP32 image, project `desk_duo`, full checksum ก่อนสลับ boot slot นี่คือ admin-authorized firmware ไม่ใช่ publisher-signature validation
+
+Worker แยกจาก HTTP server ใช้ buffer4KiB, idle timeout10s, total deadline120s. Server จำกัด4 client sockets และปิด LRU eviction เพื่อไม่ตัด upload; usage/status และ LVGL ยังให้บริการได้ settings POST ตอบ503 ระหว่าง maintenance; station reconfiguration/reconnect ใช้ atomic admission เดียวกัน Polling ภายนอกพักระหว่าง OTA (request ที่เริ่มแล้วอาจจบตาม deadline เดิม) ไม่มี LVGL call ใน worker
+
+Bootloader rollback เปิดใน defaults และ effective sdkconfig. Trial image จะถูกยืนยันหลัง runtime/display/input/UI/AP/portal/network-task initialization สำเร็จ และ UI service iteration แรกเท่านั้น ไม่รอ internet หรือ station association. Reset/crash ก่อนจุดนั้นจะกลับ slot ก่อนหน้า
+
+### Recovery และทดสอบ rollback
+
+ถ้ามี complete backup ให้ตรวจ SHA256 ตาม private recovery.json ก่อน restore layout เดิมที่0x0ด้วย esptool; การ restore full backup เป็น recovery ที่ตั้งใจเท่านั้น ไม่ใช่การ migrate. เมื่อไม่มี backup ให้ใช้ validated segmented migration ข้างบนเพื่อคืน known-good release ทาง USB โดยยังรักษา NVS/PHY. Application serial offset ใหม่คือ `0x30000` สำหรับ OTA0; การเขียน app อย่างเดียวไม่เปลี่ยน OTA boot selection จึงแนะนำ Wi-Fi OTA หรือ segmented recovery ที่ reset OTA data แล้ว
+
+Controlled rollback probe แยกจาก release ทั้ง source/build/output ไม่เรียก NVS/config API และ reset ตัวเองก่อน boot confirmation:
+
+```sh
+rtk proxy .venv/bin/python scripts/pio.py run -d tests/rollback_probe -e rollback_probe
+```
+
+ไฟล์ทดสอบคือ `tests/rollback_probe/.pio/build/rollback_probe/firmware.bin` (project `desk_duo`, version `rollback-probe`). **อย่าแจกเป็น release อย่า flash probe ผ่าน USB** หลังเตรียม USB recovery และยืนยัน known-good app แล้วจึง upload probe ผ่าน authenticated OTA เพื่อทดลอง bootloader rollback; บันทึกว่า version/slot กลับเป็นค่าเดิมจริง ก่อนเรียก rollback ว่าผ่าน Hardware-only checks ยังต้องทดสอบ settings หลัง migration, successful upload/reconnect/usage hook, truncated upload ไม่เปลี่ยน slot และ rollback จริง

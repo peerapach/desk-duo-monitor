@@ -1,6 +1,6 @@
 # ESP32 Desk Duo data feeds
 
-โปรเจกต์นี้มี source สำหรับ endpoint หุ้นจาก Google Sheets, ตัวส่ง usage จาก CodexBar app บน Mac และ firmware Desk Duo สำหรับ CYD แนวตั้ง 240×320 พร้อม receiver `POST /api/usage`, portal ตั้งค่า และการอ่านอากาศ/หุ้นตรงจาก ESP32 แล้ว Target build และ native tests ผ่าน; ยังไม่มีการ deploy Apps Script, เปิดใช้ hook, flash หรือทดสอบอุปกรณ์/endpoint จริง ดู [คู่มือ firmware](firmware/README.md) สำหรับ build, package และการตั้งค่า
+โปรเจกต์นี้มี source สำหรับ endpoint หุ้นจาก Google Sheets, ตัวส่ง usage จาก CodexBar app บน Mac และ firmware Desk Duo สำหรับ CYD แนวตั้ง 240×320 พร้อม receiver `POST /api/usage`, portal ตั้งค่า, authenticated local OTA พร้อม boot rollback และการอ่านอากาศ/หุ้นตรงจาก ESP32 แล้ว Target build และ native tests ผ่าน; ยังไม่มีการ deploy Apps Script, เปิดใช้ hook, flash หรือทดสอบอุปกรณ์/endpoint จริง ดู [คู่มือ firmware](firmware/README.md) สำหรับ build, package และการตั้งค่า
 
 ## หุ้นจาก Google Sheets
 
@@ -60,3 +60,5 @@ rtk proxy .venv/bin/python scripts/package_firmware.py
 ```
 
 ติดตั้ง build dependencies ตาม [firmware guide](firmware/README.md) ก่อน ภาพรวมสำหรับติดตั้งครั้งแรกและ app-only สำหรับอัปเดตอยู่ใน `artifacts/` ที่ไม่ commit; script ตรวจทุก segment/offset/SHA256 โดยไม่ใช้ serial ดู [third-party notices](THIRD_PARTY_NOTICES.md) เมื่อแจก firmware
+
+Firmware 2.0.0 ใช้ dual OTA slots; บอร์ด layout เดิมต้องใช้ [segmented USB migration](firmware/README.md#ota-และ-usb-migration-ที่รักษาการตั้งค่า) ครั้งเดียวเพื่อรักษา Wi-Fi/admin/token/endpoint/touch calibration. เจ้าของบอร์ดนี้ระบุไม่สร้าง backup ใหม่ จึงใช้ `scripts/migrate_ota.py --port PORT --flash --skip-backup`; ตรวจ dry run ก่อน ทุกการอัปเดตผ่าน Wi-Fi ใช้ `desk-duo-app.bin` และ Basic admin เดิม ห้ามเขียน merged image ทับบอร์ดที่ตั้งค่าแล้ว

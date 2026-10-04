@@ -1,5 +1,6 @@
 #include "network.hpp"
 #include "runtime.hpp"
+#include "ota_policy.hpp"
 #include "esp_crt_bundle.h"
 #include "esp_event.h"
 #include "esp_http_client.h"
@@ -254,15 +255,20 @@ void network_task(void*) {
         auto request = runtime_config();
         const auto& config = request.config;
         const auto now = now_ms();
-        if (ssid != config.ssid || password != config.wifiPassword) {
-            esp_wifi_disconnect(); online = false;
-            wifi_config_t station{};
-            std::memcpy(station.sta.ssid, config.ssid.data(), config.ssid.size());
-            std::memcpy(station.sta.password, config.wifiPassword.data(), config.wifiPassword.size());
-            stationReady = esp_wifi_set_config(WIFI_IF_STA, &station) == ESP_OK;
-            ssid = config.ssid; password = config.wifiPassword; retryDue = 0;
-        }
-        if (stationReady && !ssid.empty() && !online && now >= retryDue) { esp_wifi_connect(); retryDue = now + 15000; }
+        {
+            MaintenanceLease stationLease(Maintenance::Network);
+            if (!stationLease) { vTaskDelay(pdMS_TO_TICKS(100)); continue; }
+            if (ssid != config.ssid || password != config.wifiPassword) {
+                esp_wifi_disconnect(); online = false;
+                wifi_config_t station{};
+                std::memcpy(station.sta.ssid, config.ssid.data(), config.ssid.size());
+                std::memcpy(station.sta.password, config.wifiPassword.data(), config.wifiPassword.size());
+                stationReady = esp_wifi_set_config(WIFI_IF_STA, &station) == ESP_OK;
+                ssid = config.ssid; password = config.wifiPassword; retryDue = 0;
+            }
+            if (stationReady && !ssid.empty() && !online && now >= retryDue) { esp_wifi_connect(); retryDue = now + 15000; }
+        } // Station configuration cannot race OTA admission.
+        if (maintenance.updating()) { vTaskDelay(pdMS_TO_TICKS(100)); continue; }
         if (generation != request.generation) { generation = request.generation; weatherDue = stocksDue = 0; }
         if (online && !config.weather.url.empty() && now >= weatherDue) {
             auto data = fetch(config.weather);

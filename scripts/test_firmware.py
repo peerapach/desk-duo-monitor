@@ -50,6 +50,14 @@ def main() -> int:
                            str(ROOT / "firmware/main/core.cpp"), str(ROOT / "tests/firmware_core_test.cpp"),
                            str(cjson_object), "-o", str(test_binary)])
     run([str(test_binary), str(ROOT)])
+    ota = output / "ota_test"
+    run(compiler("c++") + ["-std=c++17", "-Wall", "-Wextra", "-Werror", "-I", str(sdk), str(ROOT / "firmware/main/core.cpp"), str(ROOT / "tests/ota_test.cpp"), str(cjson_object), "-o", str(ota)])
+    run([str(ota)])
+    routes = output / "ota_routes_test"
+    run(compiler("c++") + ["-std=c++17", "-Wall", "-Wextra", "-Werror", "-I", str(ROOT / "tests/ota_sdk"), "-I", str(sdk),
+                           str(ROOT / "firmware/main/core.cpp"), str(ROOT / "firmware/main/ota.cpp"), str(ROOT / "firmware/main/portal.cpp"),
+                           str(ROOT / "tests/ota_routes_test.cpp"), str(cjson_object), "-o", str(routes)])
+    run([str(routes)])
     return 0
 
 
