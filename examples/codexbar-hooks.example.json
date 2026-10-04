@@ -1,0 +1,33 @@
+{
+  "hooks": {
+    "enabled": true,
+    "events": [
+      {
+        "id": "desk-duo-claude-usage",
+        "enabled": true,
+        "event": "usage_updated",
+        "provider": "claude",
+        "executable": "/ABSOLUTE/PATH/TO/python3",
+        "arguments": [
+          "/ABSOLUTE/PATH/TO/esp32-monitor/bridge/codexbar_sender.py",
+          "--config",
+          "/ABSOLUTE/PATH/TO/bridge.local.json"
+        ],
+        "timeoutSeconds": 10
+      },
+      {
+        "id": "desk-duo-codex-usage",
+        "enabled": true,
+        "event": "usage_updated",
+        "provider": "codex",
+        "executable": "/ABSOLUTE/PATH/TO/python3",
+        "arguments": [
+          "/ABSOLUTE/PATH/TO/esp32-monitor/bridge/codexbar_sender.py",
+          "--config",
+          "/ABSOLUTE/PATH/TO/bridge.local.json"
+        ],
+        "timeoutSeconds": 10
+      }
+    ]
+  }
+}

@@ -1,0 +1,5 @@
+{
+  "endpoint": "http://esp32.local/api/usage",
+  "bearerToken": "REPLACE_WITH_DEVICE_TOKEN",
+  "timeoutSeconds": 5
+}

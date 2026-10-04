@@ -1,0 +1,11 @@
+{
+  "event": "usage_updated",
+  "provider": "codex",
+  "timestamp": "2026-10-04T10:00:00+07:00",
+  "usagePercent": 0.42,
+  "windowMinutes": 300,
+  "resetAt": "2026-10-04T15:00:00+07:00",
+  "secondaryUsagePercent": 0.715,
+  "secondaryWindowMinutes": 10080,
+  "secondaryResetAt": "2026-10-10T00:00:00+07:00"
+}

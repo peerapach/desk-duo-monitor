@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "type": "usage",
+  "provider": "codex",
+  "updatedAt": "2026-10-04T03:00:00Z",
+  "primary": {
+    "usedPercent": 42,
+    "windowMinutes": 300,
+    "resetsAt": "2026-10-04T08:00:00Z"
+  },
+  "secondary": {
+    "usedPercent": 71.5,
+    "windowMinutes": 10080,
+    "resetsAt": "2026-10-09T17:00:00Z"
+  }
+}
