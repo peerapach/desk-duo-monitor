@@ -75,7 +75,7 @@ Status: `READY — hardware-independent software milestone`.
 - Failure: schemaVersion 1, error.code: auth_required, configuration_error, invalid_sheet, source_unavailable.
 - Exposes no Node-specific require/module syntax in Code.gs; Node tests load it through vm and mock Google boundary services.
 
-- [ ] **Step 1: Write tests for the public behavior before implementation.** Representative assertions:
+- [x] **Step 1: Write tests for the public behavior before implementation.** Representative assertions:
 
 ```javascript
 const rows = [['symbol','price','changePercent','quotedAt'], ['PTT', 0, '', new Date('2026-10-04T03:00:00Z')]];
@@ -87,19 +87,19 @@ assert.equal(services.openCount, 0);
 
 Also cover: reordered headers, trailing blank rows, empty sheet/header-only, missing symbol/price header, duplicate recognized header, nonfinite/boolean/nonnumeric cells, ISO date with explicit offset normalized to UTC, invalid or ambiguous dates, defaults for blank label/currency, wrong token, missing properties, missing tab, upstream exception redaction, numeric formula results from getValues(), max 5 symbols in sheet order, reading cap, optional fields omitted, unknown columns ignored.
 
-- [ ] **Step 2: Run RED.**
+- [x] **Step 2: Run RED.**
 
 Run `rtk proxy /Users/peerapach.v/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node --test tests/stocks_endpoint.test.cjs`. Record relevant failing output and why the missing behavior causes it.
 
-- [ ] **Step 3: Implement buildStocksPayload and doGet.**
+- [x] **Step 3: Implement buildStocksPayload and doGet.**
 
 Authenticate before any SpreadsheetApp call. Use openById(property), getSheetByName(property), and bounded getRange(1,1,Math.min(lastRow,201),lastColumn).getValues(), not full getDataRange on arbitrary sheets. No token accepted via header because Apps Script event does not expose arbitrary request headers. Header matching trims strings and is case-insensitive; duplicate recognized header and missing required header return invalid_sheet. Ignore rows with blank symbol. Preserve zero and omit blanks. Accept numeric cells or trimmed unambiguous decimal/exponent numeric strings only; reject nonfinite, booleans, locale-ambiguous strings. Nonnegative price; signed changePercent. Preserve row order and stop after 5 included rows. QuotedAt accepts valid Date objects or valid ISO datetime strings with timezone; omit blank values, reject ambiguous/invalid dates. Limit symbol/label/currency lengths to 32/64/8 characters; no embedded control characters. Use pure validation and stable error codes; ContentService application/json response only, no raw exceptions.
 
-- [ ] **Step 4: Write the fixture and Thai setup guide.**
+- [x] **Step 4: Write the fixture and Thai setup guide.**
 
 Document required headers and defaults, script properties, generating a fresh random token locally, private Sheet + web app execute-as-owner, configurable access settings subject to Workspace policy, token query URL, redirect handling, JSON errors normally arriving with HTTP 200, max 5 entries, optional price source timestamps vs generatedAt, token rotation, and the fact that stocks source automation is not built. Include sample rows and actual Code.gs installation instructions; do not deploy anything. Never request the user paste real tokens into chat.
 
-- [ ] **Step 5: Run GREEN, self-review and commit.**
+- [x] **Step 5: Run GREEN, self-review and commit.**
 
 Run the Node test command above; expect all cases pass with no warnings. JSON-parse the example fixture. Commit only task-owned files using `rtk git add ...` then `rtk git commit -m "feat: add authenticated Sheets stocks endpoint"`. Include RED/GREEN commands and output in the report.
 
@@ -114,7 +114,7 @@ Run the Node test command above; expect all cases pass with no warnings. JSON-pa
 - Receiver: POST /api/usage; Content-Type application/json, Authorization Bearer. Any HTTP 2xx counts as delivered. Real device must implement this contract in subsequent firmware work.
 - Uses only Python standard library; tests import without invoking main or network.
 
-- [ ] **Step 1: Write failing tests for normalization, config and actual delivery.** Representative assertions:
+- [x] **Step 1: Write failing tests for normalization, config and actual delivery.** Representative assertions:
 
 ```python
 payload = normalize_event({"event":"usage_updated", "provider":"codex", "timestamp":"2026-10-04T10:00:00+07:00", "usagePercent":0, "secondaryUsagePercent":0.5})
@@ -126,19 +126,19 @@ self.assertNotIn("account", payload)
 
 Cover event/provider/type validation; negative/>1 fractions; bool/nonfinite numbers; unknown fields and identities ignored; omitted secondary and omitted optional fields; timestamp offset normalization with explicit timezone required; malformed datetime; positive finite windowMinutes; both windows absent preserved as no windows (unknown data, not zero); input >4096 bytes rejected; invalid JSON/nonobject; config nonempty token/URL/finite timeout 0.1..30 default 5 seconds; token control characters rejected; endpoints http/https with /api/usage path and no credentials/query/fragment; dry-run succeeds without config and never networks. Integration fixture asserts actual POST path/body/headers; returns 204 for success, 500 for receiver rejection, 302 for redirection; the redirect destination must receive zero requests. Timeout and failures return sanitized errors without token or endpoint.
 
-- [ ] **Step 2: Run RED.**
+- [x] **Step 2: Run RED.**
 
 Run `rtk proxy python3 -m unittest discover -s tests -p 'test_*.py' -v`. Record relevant failure evidence. Loopback tests may need the tool's approved local-network sandbox escalation; no real endpoints are called.
 
-- [ ] **Step 3: Implement sender.**
+- [x] **Step 3: Implement sender.**
 
 Read at most 4097 bytes from stdin and reject >4096. Normalize explicitly with allowlisted fields, validate all finite numeric scalars and timezone-aware dates before HTTP. Omit window details if usage percentage is missing; do not invent quotas. Require config only outside --dry-run. Validate URL/token/timeout before constructing requests. Use urllib Request and an opener whose redirect handler rejects all redirects before bearer headers can reach another host. Bound timeout, disable accidental response-body logging, treat 2xx as success and reject other statuses. CLI exits 0 on success, 2 for invalid input/config, 1 on delivery failure, printing only coarse error messages to stderr. No automatic retries and no polling loop; CodexBar controls hook cadence.
 
-- [ ] **Step 4: Document protocols and wire examples.**
+- [x] **Step 4: Document protocols and wire examples.**
 
 Thai README links the Sheets guide, explains source-only status, provides --dry-run command, manual posting test, private `bridge.local.json` permission guidance, and direct CodexBar app hook config (absolute Python executable + absolute sender script + absolute config, each provider an enabled usage_updated rule). The sample config must be an explicit merge fragment, never instructions to overwrite provider/secret config. Dummy token/paths clearly marked; no live config changes. Document current hook's 600-second cap as version-dependent, no CodexBar CLI requirement, receiver still requiring firmware, unknown hardware model, weather independent on ESP32 and Open-Meteo config planned after board confirmation. Document payload field units, examples and source timestamps.
 
-- [ ] **Step 5: Run both suites, self-review and commit.**
+- [x] **Step 5: Run both suites, self-review and commit.**
 
 Run Python unittest command and Node endpoint test command. Expect all pass. Run dry-run from the event fixture and compare parsed output with usage-response.json; parse all example JSON. Run `rtk git diff --check`. Commit only task-owned files with `rtk git commit -m "feat: forward CodexBar usage to device receiver"`. Full report includes commands/results and local-only verification limits.
 
@@ -166,7 +166,7 @@ Status: READY for source/build/native verification; user removed board due to lo
 - Snapshot exposes only render data, receipt times, stale/unknown flags and nonsecret display settings. No config passwords/tokens/headers/URLs in render snapshot.
 - `redirectHeadersAllowed(const std::string& from,const std::string& to) -> bool` true only for same origin; `redirectTargetAllowed(from,to) -> bool` rejects HTTPS downgrade and invalid schemes/userinfo/control characters. `mapTouch(int rawX,int rawY,const TouchCalibration&) -> std::pair<int,int>` clamps to portrait coordinates.
 
-- [ ] **Step1: Write native failing tests for public behaviours.** Use real parsing/model functions and existing shared fixtures. Representative assertions:
+- [x] **Step1: Write native failing tests for public behaviours.** Use real parsing/model functions and existing shared fixtures. Representative assertions:
 
 ```cpp
 auto u = deskduo::parseUsage(usageFixture);
@@ -180,17 +180,17 @@ assert(zero.value && zero.value->items[0].price == 0.0);
 
 Required cases: invalid JSON/trailing data/nesting17; wrong schema/provider/types/bool/nonfinite/ranges; escaped NUL/control characters in provider, URL, headers and credentials; leap dates/timezone/fractional seconds; stocks missing values, invalid negative price, >5 items, error envelope; weather zero/negative temperature, humidity0..100, invalid WMO code, optional missing arrays,4 forecast slots, local-naive timestamps plus utc_offset_seconds25200 vs no-offset unknown; path lookup indexes/malformed path. Config patch preserves omitted fields; rejects oversized URL/headers, CRLF/userinfo, invalid intervals, rotation1, unauthorized setupPassword change, invalid touch spans; round-trip internal config and public redaction must omit all secrets and URL queries. Model first failure stays unknown, later failure retains values/stale, stale age threshold2×refresh, old generation ignored, changed source clears old data, older usage does not overwrite newer same provider, both providers independent. Redirect same-origin/default-port handling and HTTPS downgrade; touch clamps all four endpoints into240×320. Tests assert actual outputs, not implementation structure.
 
-- [ ] **Step2: Run RED.** `rtk proxy python3 scripts/test_firmware.py` builds test binary with clang/clang++, core sources, and SDK cJSON.c. If runner absent initially compile equivalent manually; record assertion failures caused by missing behaviour. The runner locates SDK from PLATFORMIO_CORE_DIR or project .platformio, uses temp/output under project .platformio/native-tests, compiles cJSON as C, then core/tests as C++17; does not need device or network.
+- [x] **Step2: Run RED.** `rtk proxy python3 scripts/test_firmware.py` builds test binary with clang/clang++, core sources, and SDK cJSON.c. If runner absent initially compile equivalent manually; record assertion failures caused by missing behaviour. The runner locates SDK from PLATFORMIO_CORE_DIR or project .platformio, uses temp/output under project .platformio/native-tests, compiles cJSON as C, then core/tests as C++17; does not need device or network.
 
-- [ ] **Step3: Implement core parsers/settings/model.** All validation before state changes; JSON max bounds and nesting cap16 including strings/escapes. Whitespace after root allowed, trailing payload rejected. Epoch conversion independent of process timezone, calendar validated, no unchecked unsigned conversion. Unknown optional values remain optional; state failure doesn't fabricate zeros. Accept stocks source fields per committed endpoint; stock symbol/label/currency limits are 32/64/8 UTF-16 code units to match the JavaScript producer, not UTF-8 byte counts. Store valid UTF-8 in bounded strings and cover a Thai label longer than64 UTF-8 bytes but within64 UTF-16 units; configuration-source changes clear only corresponding cached data and invalidate in-flight generation. Source-generation acceptance is explicit. Snapshot uses monotonic age, no secrets. Refresh intervals must be integer30–86400 seconds; rotation must be0 (disabled) or integer5–300 seconds, matching the approved spec. Config defaults have endpoints empty, refresh900/300, rotation20, label Weather, empty credentials for runtime RNG provisioning. Usage token if provided length16..128 printable non-whitespace; WiFi SSID≤32 bytes/password≤64; setup password generated runtime and never patched. Header bounds6 /64/256, URL1024, mapping128, body8192; touch defaults based on raw12-bit ADC with transform configurable, not claimed calibrated. Keep source header/private query values only in serialized internal config, never redacted view.
+- [x] **Step3: Implement core parsers/settings/model.** All validation before state changes; JSON max bounds and nesting cap16 including strings/escapes. Whitespace after root allowed, trailing payload rejected. Epoch conversion independent of process timezone, calendar validated, no unchecked unsigned conversion. Unknown optional values remain optional; state failure doesn't fabricate zeros. Accept stocks source fields per committed endpoint; stock symbol/label/currency limits are 32/64/8 UTF-16 code units to match the JavaScript producer, not UTF-8 byte counts. Store valid UTF-8 in bounded strings and cover a Thai label longer than64 UTF-8 bytes but within64 UTF-16 units; configuration-source changes clear only corresponding cached data and invalidate in-flight generation. Source-generation acceptance is explicit. Snapshot uses monotonic age, no secrets. Refresh intervals must be integer30–86400 seconds; rotation must be0 (disabled) or integer5–300 seconds, matching the approved spec. Config defaults have endpoints empty, refresh900/300, rotation20, label Weather, empty credentials for runtime RNG provisioning. Usage token if provided length16..128 printable non-whitespace; WiFi SSID≤32 bytes/password≤64; setup password generated runtime and never patched. Header bounds6 /64/256, URL1024, mapping128, body8192; touch defaults based on raw12-bit ADC with transform configurable, not claimed calibrated. Keep source header/private query values only in serialized internal config, never redacted view.
 
-- [ ] **Step4: Add build/native helpers and fixtures.** requirements-build pins platformio6.2.0 + truststore0.10.4. `scripts/pio.py` runs PlatformIO as a CLI using public truststore.inject_into_ssl (application-only) and project .platformio; propagate existing system trust into build Python subprocesses via an explicitly scoped sitecustomize bootstrap (no global Python/settings edits and no disabling SSL). Preserve existing PYTHONPATH, derive trusted installed package location rather than arbitrary downloaded CA. It only acts for this build command; does not modify Python sender runtime. Native runner/fixtures include no real credentials. Example device config uses dummy secrets/empty URLs and fields above; weather fixture values explicitly simulated. No SDK vendoring into Git.
+- [x] **Step4: Add build/native helpers and fixtures.** requirements-build pins platformio6.2.0 + truststore0.10.4. `scripts/pio.py` runs PlatformIO as a CLI using public truststore.inject_into_ssl (application-only) and project .platformio; propagate existing system trust into build Python subprocesses via an explicitly scoped sitecustomize bootstrap (no global Python/settings edits and no disabling SSL). Preserve existing PYTHONPATH, derive trusted installed package location rather than arbitrary downloaded CA. It only acts for this build command; does not modify Python sender runtime. Native runner/fixtures include no real credentials. Example device config uses dummy secrets/empty URLs and fields above; weather fixture values explicitly simulated. No SDK vendoring into Git.
 
-- [ ] **Step5: Run native GREEN and current full suites, self-review, commit.** Native tests via runner; Python unittest and Node endpoint tests via existing commands. Parse examples and diff check. No device or live endpoints. Commit only task-owned files. Report TDD, compiler commands, tests and public header contract for Task4.
+- [x] **Step5: Run native GREEN and current full suites, self-review, commit.** Native tests via runner; Python unittest and Node endpoint tests via existing commands. Parse examples and diff check. No device or live endpoints. Commit only task-owned files. Report TDD, compiler commands, tests and public header contract for Task4.
 
 ### Task 4: CYD runtime, portrait UI, source networking and configuration portal
 
-**Files:** Create `firmware/platformio.ini`, `firmware/CMakeLists.txt`, `firmware/sdkconfig.defaults`, `firmware/partitions.csv`, `firmware/main/CMakeLists.txt`, `firmware/main/main.cpp`, `firmware/main/runtime.hpp`, `firmware/main/runtime.cpp`, `firmware/main/display.hpp`, `firmware/main/display.cpp`, `firmware/main/input.hpp`, `firmware/main/input.cpp`, `firmware/main/network.hpp`, `firmware/main/network.cpp`, `firmware/main/portal.hpp`, `firmware/main/portal.cpp`, `firmware/main/ui.hpp`, `firmware/main/ui.cpp`, `firmware/main/assets.*`, `firmware/main/fonts/*` as needed, `firmware/main/idf_component.yml`, `firmware/dependencies.lock` from build, `firmware/README.md`, `THIRD_PARTY_NOTICES.md`, `scripts/package_firmware.py`. Update `README.md`, `docs/protocol.md`, `.gitignore` for managed/generated dependencies and artifacts; update native tests only to cover new pure policy helpers if required.
+**Files:** Create `firmware/platformio.ini`, `firmware/CMakeLists.txt`, `firmware/sdkconfig.defaults`, `firmware/partitions.csv`, `firmware/main/CMakeLists.txt`, `firmware/main/main.cpp`, `firmware/main/runtime.hpp`, `firmware/main/runtime.cpp`, `firmware/main/display.hpp`, `firmware/main/display.cpp`, `firmware/main/input.hpp`, `firmware/main/input.cpp`, `firmware/main/network.hpp`, `firmware/main/network.cpp`, `firmware/main/portal.hpp`, `firmware/main/portal.cpp`, `firmware/main/ui.hpp`, `firmware/main/ui.cpp`, `firmware/main/assets.*`, `firmware/main/fonts/*` as needed, `firmware/main/idf_component.yml`, `firmware/dependencies.lock` from build, `firmware/README.md`, `THIRD_PARTY_NOTICES.md`, `scripts/package_firmware.py`, `tests/portal.test.cjs` (execute actual embedded portal JS with minimal DOM/fetch boundary harness). Update `README.md`, `docs/protocol.md`, `.gitignore` for managed/generated dependencies and artifacts; update native tests only to cover new pure policy helpers if required.
 
 **Interfaces:**
 - Read core.hpp and Task3 report, use exact implemented core contracts, not parallel JSON/model implementation.
