@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-10-04T03:00:00.000Z",
+  "items": [
+    {
+      "symbol": "PTT",
+      "label": "PTT",
+      "price": 32.5,
+      "changePercent": 1.56,
+      "currency": "THB",
+      "quotedAt": "2026-10-04T02:55:00.000Z"
+    },
+    {
+      "symbol": "AOT",
+      "label": "Airports of Thailand",
+      "price": 60,
+      "currency": "THB"
+    }
+  ]
+}
