@@ -49,7 +49,34 @@ int main() {
  json=weatherDiagnosticsJson(collector.snapshot(),current,true,1700000001,210);root=cJSON_Parse(json.c_str());attempt=cJSON_GetObjectItemCaseSensitive(root,"attempt");assert(std::string(cJSON_GetObjectItemCaseSensitive(attempt,"parserReason")->valuestring)==entry.second);assert(json.find("secret")==std::string::npos);cJSON_Delete(root);
  }
  record=collector.begin(10,300,true);assert(!record.httpResult && !record.tlsCode && !record.failureHeap.freeBytes && record.parserReason==WeatherParserReason::None);
- std::atomic<bool> stop{false};std::thread writer([&]{for(uint64_t i=1;i<20000;++i){auto r=collector.begin(i,i,true);collector.finish(r,i+3,i+5);}stop=true;});
- while(!stop){auto r=collector.snapshot();if(r.outcome!=WeatherOutcome::Running && r.startedMs!=300){assert(r.elapsedMs==3 && r.nextDueMs==r.startedMs+5 && r.generation==r.startedMs);}}
- writer.join();std::cout<<"Weather diagnostics bounded record, unknown values, first failure, privacy, accepted snapshot, generation and coherent reader passed\n";
+ unsigned checked=0;
+ std::atomic<bool> terminalPublished{false},terminalChecked{false},stop{false};
+ std::thread writer([&]{
+  for(uint64_t i=1;i<20000;++i){
+   auto r=collector.begin(i,i,true);
+   r.outcome=WeatherOutcome::Accepted;r.phase=WeatherPhase::Complete;
+   collector.finish(r,i+3,i+5);
+   if(i==1){
+    // Keep one terminal publication available until the reader checks it;
+    // then let subsequent publications race with the snapshot reader.
+    terminalPublished=true;
+    while(!terminalChecked)std::this_thread::yield();
+   }
+  }
+  stop=true;
+ });
+ const auto checkTerminal=[&](const WeatherAttempt& r){
+  assert(r.outcome==WeatherOutcome::Accepted && r.phase==WeatherPhase::Complete);
+  assert(r.elapsedMs==3 && r.nextDueMs==r.startedMs+5 && r.generation==r.startedMs);
+  ++checked;
+ };
+ while(!terminalPublished)std::this_thread::yield();
+ checkTerminal(collector.snapshot());terminalChecked=true;
+ while(!stop){
+  const auto r=collector.snapshot();
+  if(r.outcome!=WeatherOutcome::Running)checkTerminal(r);
+ }
+ writer.join();
+ assert(checked>0 && "concurrent reader must examine a terminal snapshot");
+ std::cout<<"Weather diagnostics bounded record, unknown values, first failure, privacy, accepted snapshot, generation and coherent reader passed; terminal snapshots checked: "<<checked<<"\n";
 }
