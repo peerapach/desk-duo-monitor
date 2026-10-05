@@ -272,6 +272,8 @@ void ui_tick() {
             const bool weekly=p==1 && displayMode==CodexUsageMode::Weekly;
             auto selected=weekly && src.data?codexWeeklyWindow(*src.data):std::nullopt;
             text(values[p*6],weekly && !selected?"unknown":age(src));
+            if(weekly && !selected)lv_obj_add_flag(bars[p*2],LV_OBJ_FLAG_HIDDEN);
+            else lv_obj_remove_flag(bars[p*2],LV_OBJ_FLAG_HIDDEN);
             for(auto* unused:{values[p*6+3],values[p*6+4],bars[p*2+1]}) {
                 if(weekly)lv_obj_add_flag(unused,LV_OBJ_FLAG_HIDDEN);
                 else lv_obj_remove_flag(unused,LV_OBJ_FLAG_HIDDEN);

@@ -36,6 +36,18 @@ lv_obj_t* findLabel(lv_obj_t* parent,const char* text){
         if(auto* match=findLabel(lv_obj_get_child(parent,i),text))return match;
     return nullptr;
 }
+// Locate the rendered primary bar by its relation to the selected reset label,
+// without depending on private UI child indexes.
+lv_obj_t* findBarBelow(lv_obj_t* reset){
+    lv_obj_t* nearest=nullptr;
+    auto* parent=lv_obj_get_parent(reset);
+    for(uint32_t i=0;i<lv_obj_get_child_count(parent);++i){
+        auto* child=lv_obj_get_child(parent,i);
+        if(lv_obj_check_type(child,&lv_bar_class) && lv_obj_get_y(child)>lv_obj_get_y(reset) &&
+           (!nearest || lv_obj_get_y(child)<lv_obj_get_y(nearest)))nearest=child;
+    }
+    return nearest;
+}
 void tapTab(const char* name){
     auto shaped=deskduo::shapeText(name);
     auto* tab=findLabel(lv_screen_active(),shaped.c_str());
@@ -142,15 +154,34 @@ int main(){
     deskduo::mode=deskduo::CodexUsageMode::Weekly;clockMs+=20;capture("duo-weekly.ppm");
     assert(findLabel(lv_screen_active(),"21%"));
     auto* weeklyReset=findLabel(lv_screen_active(),"Weekly reset 07/10 14:00");assert(weeklyReset);
+    auto* codexPrimaryBar=findBarBelow(weeklyReset);assert(codexPrimaryBar);
+    lv_area_t primaryBarArea;lv_obj_get_coords(codexPrimaryBar,&primaryBarArea);
     assert(countVisible(countVisible,lv_screen_active(),&lv_bar_class)==3);
     assert(lv_obj_has_flag(findLabel(lv_screen_active(),"Weekly  21%"),LV_OBJ_FLAG_HIDDEN));
     data.codex.data->primary=deskduo::UsageWindow{73.25,10080,4102444800};data.codex.data->secondary.reset();
     clockMs+=1000;capture("duo-weekly-primary.ppm");
     assert(findLabel(lv_screen_active(),"73.25%"));assert(findLabel(lv_screen_active(),"Weekly reset 01/01 07:00"));
+    data.codex.data->primary->usedPercent=0;clockMs+=1000;deskduo::ui_tick();
+    assert(findLabel(lv_screen_active(),"0%"));
+    assert(!lv_obj_has_flag(codexPrimaryBar,LV_OBJ_FLAG_HIDDEN) && "eligible zero weekly usage must keep its primary bar visible");
+    assert(lv_bar_get_value(codexPrimaryBar)==0);
     data.codex.data->primary->windowMinutes=300;clockMs+=1000;capture("duo-weekly-unavailable.ppm");
     assert(findLabel(lv_screen_active(),"Weekly reset --"));assert(!findLabel(lv_screen_active(),"73.25%"));
+    assert(!findLabel(lv_screen_active(),"0%"));
+    assert(lv_obj_has_flag(codexPrimaryBar,LV_OBJ_FLAG_HIDDEN) && "no eligible weekly window must not render a zero-valued primary bar");
+    assert(countVisible(countVisible,lv_screen_active(),&lv_bar_class)==2);
+    lv_area_t hiddenBarArea;lv_obj_get_coords(codexPrimaryBar,&hiddenBarArea);
+    assert(hiddenBarArea.x1==primaryBarArea.x1 && hiddenBarArea.y1==primaryBarArea.y1 &&
+           hiddenBarArea.x2==primaryBarArea.x2 && hiddenBarArea.y2==primaryBarArea.y2 && "unknown weekly must reserve the primary bar layout space");
+    deskduo::mode=deskduo::CodexUsageMode::Both;clockMs+=20;deskduo::ui_tick();
+    assert(!lv_obj_has_flag(codexPrimaryBar,LV_OBJ_FLAG_HIDDEN) && "switching to Both must restore the primary bar immediately");
+    assert(countVisible(countVisible,lv_screen_active(),&lv_bar_class)==4);
+    deskduo::mode=deskduo::CodexUsageMode::Weekly;clockMs+=20;deskduo::ui_tick();
+    assert(lv_obj_has_flag(codexPrimaryBar,LV_OBJ_FLAG_HIDDEN));
+    data.codex.data->primary->usedPercent=73.25;
     data.codex.data->primary->windowMinutes.reset();clockMs+=1000;deskduo::ui_tick();
     assert(findLabel(lv_screen_active(),"73.25%"));assert(findLabel(lv_screen_active(),"Weekly reset 01/01 07:00"));
+    assert(!lv_obj_has_flag(codexPrimaryBar,LV_OBJ_FLAG_HIDDEN) && "eligible weekly data must restore the primary bar after unavailable data");
     deskduo::mode=deskduo::CodexUsageMode::Both;clockMs+=20;deskduo::ui_tick();
     assert(countVisible(countVisible,lv_screen_active(),&lv_bar_class)==4);
     assert(findLabel(lv_screen_active(),"window -- reset 01/01 07:00"));
