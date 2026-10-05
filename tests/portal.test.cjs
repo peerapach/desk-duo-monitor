@@ -3,19 +3,29 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const path = require('node:path');
-const production = fs.readFileSync(path.join(__dirname, '../firmware/main/assets.cpp'), 'utf8').split('<script>')[1].split('</script>')[0];
+const asset = fs.readFileSync(path.join(__dirname, '../firmware/main/assets.cpp'), 'utf8');
+const production = asset.split('<script>')[1].split('</script>')[0];
 
-async function portal(displayLoad=true) {
+async function portal(options={}) {
+  if(typeof options==='boolean')options={displayLoad:options};
+  const {displayLoad=true,configLoad=true,reloadLoad=true}=options;let configLoads=0;
   const uploads=[];let firmware={version:"2.0.0",capacity:1966080,busy:false,runningPartition:"ota_0"};
   const timers=new Map();let nextTimer=0;
   const elements = new Map();
-  const get = id => {
-    if (!elements.has(id)) elements.set(id, {value:'', checked:false, textContent:'', append(){}, addEventListener(name, handler){this[name]=handler;}});
-    return elements.get(id);
+  const markup=[];
+  const register = html => {
+    markup.push(html);
+    for(const match of html.matchAll(/id="([^"]+)"/g))elements.set(match[1], {
+      value:'',checked:false,textContent:'',disabled:false,
+      append(element){register(element.innerHTML);},
+      addEventListener(name,handler){this[name]=handler;}
+    });
   };
-  const settings = {autoRotateSeconds:20, touch:{swapAxes:false,invertX:false,invertY:false,minX:0,maxX:4095,minY:0,maxY:4095},
-    weather:{url:'https://weather.test/data',label:'Bangkok',fields:{temperature:'current.temperature_2m'},refreshSeconds:900},
-    stocks:{url:'https://script.test/exec',refreshSeconds:300}};
+  register(asset.split('<script>')[0]);
+  const get = id => elements.get(id) || null;
+  const settings = {currentSSID:'saved-network',wifiPasswordConfigured:true,usageTokenConfigured:true,autoRotateSeconds:20, touch:{swapAxes:false,invertX:false,invertY:false,minX:0,maxX:4095,minY:0,maxY:4095},
+    weather:{url:'https://weather.test/data',headersConfigured:true,urlDetailsHidden:true,label:'Bangkok',fields:{temperature:'current.temperature_2m'},refreshSeconds:900},
+    stocks:{url:'https://script.test/exec',headersConfigured:false,urlDetailsHidden:false,refreshSeconds:300},...options.settings};
   const requests = [];const displayRequests=[];
   const context = vm.createContext({
     setTimeout(fn){const id=++nextTimer;timers.set(id,fn);return id;},clearTimeout(id){timers.delete(id);},AbortController,
@@ -24,24 +34,109 @@ async function portal(displayLoad=true) {
     fetch:async (url, options) => {
       if(url==='/api/display'){if(!options.method){if(!displayLoad)throw Error('offline');return {ok:true,json:async()=>({codexUsageMode:'weekly'})};}displayRequests.push(JSON.parse(options.body));return {ok:true,status:204};}
       if(url==='/api/firmware')return {ok:true,status:200,json:async()=>structuredClone(firmware)};
-      if(options.method)requests.push(JSON.parse(options.body));
-      return {ok:true,status:options.method?204:200,json:async()=>structuredClone(settings)};
+      if(url!=='/api/config')throw Error('unexpected URL '+url);
+      if(options.method){
+        const patch=JSON.parse(options.body);requests.push(patch);
+        if(Object.hasOwn(patch,'ssid'))settings.currentSSID=patch.ssid;
+        if(Object.hasOwn(patch,'wifiPassword'))settings.wifiPasswordConfigured=Boolean(patch.wifiPassword);
+        if(Object.hasOwn(patch,'usageToken'))settings.usageTokenConfigured=Boolean(patch.usageToken);
+        if(Object.hasOwn(patch,'autoRotateSeconds'))settings.autoRotateSeconds=patch.autoRotateSeconds;
+        if(patch.touch)Object.assign(settings.touch,patch.touch);
+        for(const source of ['weather','stocks'])if(patch[source]){
+          const replacement={...patch[source]};
+          if(Object.hasOwn(replacement,'url')){
+            settings[source].urlDetailsHidden=/[?#]/.test(replacement.url);
+            replacement.url=replacement.url.split(/[?#]/)[0];
+          }
+          if(Object.hasOwn(replacement,'headers')){
+            settings[source].headersConfigured=Object.keys(replacement.headers).length>0;delete replacement.headers;
+          }
+          Object.assign(settings[source],replacement);
+        }
+        return {ok:true,status:204};
+      }
+      if(++configLoads===1?!configLoad:!reloadLoad)throw Error('config offline');
+      return {ok:true,status:200,json:async()=>structuredClone(settings)};
     }});
   vm.runInContext(production,context);
   await new Promise(resolve=>setImmediate(resolve));
   const submit = async () => {await get('settings').submit({preventDefault(){}}); return requests.at(-1);};
-  return {get,submit,requests,displayRequests,displaySubmit:()=>get("display").submit({preventDefault(){}}),uploads,timers,setFirmware(value){firmware=value;},firmwareSubmit:()=>get("firmware").submit({preventDefault(){}})};
+  return {get,submit,requests,markup,displayRequests,displaySubmit:()=>get("display").submit({preventDefault(){}}),uploads,timers,setFirmware(value){firmware=value;},firmwareSubmit:()=>get("firmware").submit({preventDefault(){}})};
 }
 
-test('unchanged settings omit redacted URL queries and all hidden credentials', async()=>{
+test('unchanged settings never POST and changed source fields omit hidden values', async()=>{
   const p=await portal();
-  const patch=await p.submit();
-  for(const key of ['ssid','wifiPassword','usageToken','setupPassword']) assert.equal(Object.hasOwn(patch,key),false,key);
-  for(const source of ['weather','stocks']) {
-    assert.equal(Object.hasOwn(patch[source],'url'),false,source+' URL');
-    assert.equal(Object.hasOwn(patch[source],'headers'),false,source+' headers');
-  }
-  assert.equal(patch.weather.refreshSeconds,900);
+  await p.submit();assert.equal(p.requests.length,0);
+  assert.match(p.get('status').textContent,/ไม่มีการเปลี่ยนแปลง/);
+  p.get('weatherLabel').value='Forecast';
+  assert.deepEqual(await p.submit(),{weather:{label:'Forecast'}});
+});
+
+// Catches redacted settings being mistaken for empty replacements or inserted as HTML.
+test('saved values and presence are visible while secret and URL editors stay blank',async()=>{
+  const marker='<img src=x onerror=alert(1)>';
+  const p=await portal({settings:{currentSSID:marker}});
+  assert.equal(p.get('ssid').value,marker);
+  assert.match(p.get('ssidStored').textContent,/SSID.*บันทึก/);
+  assert.ok(p.get('ssidStored').textContent.includes(marker));
+  assert.match(p.get('wifiPasswordStored').textContent,/ตั้งค่าแล้ว/);
+  assert.match(p.get('usageTokenStored').textContent,/ตั้งค่าแล้ว/);
+  assert.match(p.get('weatherHeadersStored').textContent,/ตั้งค่าแล้ว/);
+  assert.match(p.get('stocksHeadersStored').textContent,/ยังไม่ตั้งค่า/);
+  assert.match(p.get('weatherStored').textContent,/https:\/\/weather.test\/data/);
+  assert.match(p.get('weatherStored').textContent,/ซ่อน query.*fragment/);
+  assert.doesNotMatch(p.get('stocksStored').textContent,/ซ่อน query/);
+  for(const id of ['wifiPassword','usageToken','weatherUrl','stocksUrl','weatherHeaders','stocksHeaders'])assert.equal(p.get(id).value,'',id);
+  assert.equal(p.get('autoRotateSeconds').value,20);
+  assert.equal(JSON.parse(p.get('touch').value).maxX,4095);
+  assert.equal(p.get('weatherRefresh').value,900);
+  assert.equal(p.get('weatherLabel').value,'Bangkok');
+  assert.deepEqual(JSON.parse(p.get('weatherFields').value),{temperature:'current.temperature_2m'});
+  assert.ok(p.markup.every(html=>!html.includes(marker)));
+});
+
+test('empty configuration is displayed as unset only after successful loading',async()=>{
+ const p=await portal({settings:{currentSSID:'',wifiPasswordConfigured:false,usageTokenConfigured:false,
+   weather:{url:'',headersConfigured:false,urlDetailsHidden:false,refreshSeconds:900,label:'Weather',fields:{temperature:'current.temperature_2m'}}}});
+ for(const id of ['ssidStored','wifiPasswordStored','usageTokenStored','weatherStored','weatherHeadersStored']){assert.ok(p.get(id),'missing current-state control '+id);assert.match(p.get(id).textContent,/ยังไม่ตั้ง/);}
+ assert.equal(p.get('settingsButton').disabled,false);
+});
+
+test('only actual scalar, mapping and calibration edits are posted',async()=>{
+ const p=await portal();
+ p.get('touch').value=JSON.stringify({maxY:4095,minY:0,maxX:4095,minX:0,invertY:false,invertX:false,swapAxes:false});
+ p.get('weatherFields').value=' { "temperature" : "current.temperature_2m" } ';
+ await p.submit();assert.equal(p.requests.length,0);
+ p.get('autoRotateSeconds').value='30';p.get('stocksRefresh').value='600';
+ p.get('weatherFields').value='{"temperature":"data.temp"}';
+ const touch=JSON.parse(p.get('touch').value);touch.invertX=true;p.get('touch').value=JSON.stringify(touch);
+ assert.deepEqual(await p.submit(),{autoRotateSeconds:30,stocks:{refreshSeconds:600},weather:{fields:{temperature:'data.temp'}},touch:{invertX:true}});
+ assert.match(p.get('weatherStored').textContent,/ซ่อน query/);
+ await p.submit();assert.equal(p.requests.length,1);
+});
+
+test('failed initial config load blocks settings writes while display remains usable',async()=>{
+ const p=await portal({configLoad:false});
+ assert.ok(p.get('settingsButton'),'missing guarded settings Save');assert.equal(p.get('settingsButton').disabled,true);
+ for(const id of ['ssidStored','wifiPasswordStored','usageTokenStored','weatherStored','weatherHeadersStored'])assert.doesNotMatch(p.get(id).textContent,/ยังไม่ตั้ง/);
+ await p.submit();assert.equal(p.requests.length,0);
+ p.get('codexUsageMode').value='both';await p.displaySubmit();assert.deepEqual(p.displayRequests,[{codexUsageMode:'both'}]);
+});
+
+test('incomplete current settings never become a writable or unset snapshot',async()=>{
+ const p=await portal({settings:{autoRotateSeconds:undefined}});
+ assert.equal(p.get('settingsButton').disabled,true);
+ assert.match(p.get('ssidStored').textContent,/ไม่ทราบ/);
+ await p.submit();assert.equal(p.requests.length,0);
+});
+
+test('successful commit with failed reload reports saved and blocks stale resubmission',async()=>{
+ const p=await portal({reloadLoad:false});p.get('weatherLabel').value='Forecast';
+ await p.submit();assert.deepEqual(p.requests,[{weather:{label:'Forecast'}}]);
+ assert.match(p.get('status').textContent,/บันทึกแล้ว.*โหลด.*ไม่สำเร็จ/);
+ assert.ok(p.get('settingsButton'),'missing guarded settings Save');assert.equal(p.get('settingsButton').disabled,true);
+ assert.match(p.get('weatherStored').textContent,/ไม่ทราบ/);
+ await p.submit();assert.equal(p.requests.length,1);
 });
 
 test('edited URL keeps its complete query and replacements are sent only when entered', async()=>{
@@ -117,7 +212,7 @@ test('display form loads and saves independently of Wi-Fi/source settings',async
  const p=await portal();assert.equal(p.get('codexUsageMode').value,'weekly');
  p.get('codexUsageMode').value='both';await p.displaySubmit();
  assert.deepEqual(p.displayRequests,[{codexUsageMode:'both'}]);assert.equal(p.requests.length,0);
- const patch=await p.submit();assert.equal(Object.hasOwn(patch,'codexUsageMode'),false);
+ await p.submit();assert.equal(p.requests.length,0);
 });
 test('display save stays guarded when initial load fails',async()=>{
  const p=await portal(false);assert.equal(p.get('displayButton').disabled,true);

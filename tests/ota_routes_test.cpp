@@ -67,7 +67,7 @@ void vTaskDelay(int ticks){clockMs+=ticks;}
 void esp_restart(){throw Reboot{};}
 namespace deskduo {
 extern const char portal_html[]="test page";
-RequestConfig runtime_config(){auto c=defaultConfig();c.setupPassword="test-admin";c.usageToken="test-usage-token-123";return {c,0};}
+RequestConfig runtime_config(){auto c=defaultConfig();c.setupPassword="test-admin";c.usageToken="test-usage-token-123";c.ssid="saved-network";c.wifiPassword="test-wifi-secret";c.weather.url="https://weather.test/data?key=test-query-secret";c.weather.headers={{"X-Key","test-header-secret"}};return {c,0};}
 DisplayPreference displayPreference;
 bool displaySave=true;
 CodexUsageMode runtime_display_mode(){return displayPreference.get();}
@@ -87,6 +87,20 @@ int main(int argc,char**){
         assert(dispatch(r)==ESP_FAIL && e.status=="401 Unauthorized" && e.reads==0);
       }
     }
+    // Current settings remain administrator-only, with presence instead of secrets.
+    for(auto credential:{"","Bearer test-usage-token-123","Basic wrong"}) {
+        auto e=exchange();e.headers["Authorization"]=credential;auto r=request(e,"/api/config",HTTP_GET);
+        assert(dispatch(r)==ESP_FAIL && e.status=="401 Unauthorized" && e.reads==0);
+    }
+    {auto e=exchange();auto r=request(e,"/api/config",HTTP_GET);
+     assert(dispatch(r)==ESP_OK && e.status=="200 OK");
+     assert(e.response.find(R"("currentSSID":"saved-network")")!=std::string::npos);
+     assert(e.response.find(R"("wifiPasswordConfigured":true)")!=std::string::npos);
+     assert(e.response.find(R"("usageTokenConfigured":true)")!=std::string::npos);
+     assert(e.response.find(R"("headersConfigured":true)")!=std::string::npos);
+     assert(e.response.find(R"("urlDetailsHidden":true)")!=std::string::npos);
+     for(auto secret:{"test-admin","test-usage-token-123","test-wifi-secret","test-query-secret","test-header-secret"})assert(e.response.find(secret)==std::string::npos);
+     assert(patches==0 && usage==0);}
     assert(routes.count({"/api/touch",HTTP_GET}) && !routes.count({"/api/touch",HTTP_POST}));
     for(auto credential:{"","Bearer test-usage-token-123","Basic wrong"}) {
         auto e=exchange();e.headers["Authorization"]=credential;auto r=request(e,"/api/touch",HTTP_GET);

@@ -849,6 +849,11 @@ cJSON* configJson(const Config& config, bool includeSecrets, bool publicUrls) {
         addString(root, "wifiPassword", config.wifiPassword);
         addString(root, "usageToken", config.usageToken);
         addString(root, "setupPassword", config.setupPassword);
+    } else if (publicUrls) {
+        // Public metadata never enters the persisted or accepted patch shape.
+        addString(root, "currentSSID", config.ssid);
+        cJSON_AddBoolToObject(root, "wifiPasswordConfigured", !config.wifiPassword.empty());
+        cJSON_AddBoolToObject(root, "usageTokenConfigured", !config.usageToken.empty());
     }
     cJSON* weather = cJSON_AddObjectToObject(root, "weather");
     cJSON* stocks = cJSON_AddObjectToObject(root, "stocks");
@@ -861,6 +866,8 @@ cJSON* configJson(const Config& config, bool includeSecrets, bool publicUrls) {
         std::string url = source.url;
         if (publicUrls) {
             const std::size_t query = url.find_first_of("?#");
+            cJSON_AddBoolToObject(target, "urlDetailsHidden", query != std::string::npos);
+            cJSON_AddBoolToObject(target, "headersConfigured", !source.headers.empty());
             if (query != std::string::npos) url.resize(query);
         }
         addString(target, "url", url);

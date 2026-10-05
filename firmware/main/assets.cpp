@@ -17,14 +17,17 @@ const char portal_html[] = R"HTML(<!doctype html><html lang="th"><meta charset="
 <h1>Desk Duo</h1><p>ตั้งค่า Wi-Fi และแหล่งข้อมูลของจอ ค่าลับที่เว้นว่างจะคงค่าเดิม</p>
 <form id="settings" autocomplete="off">
 <fieldset><legend>Wi-Fi / usage</legend>
-<label>แทนที่ Wi-Fi SSID (ว่าง = คงค่าเดิม)<input id="ssid" maxlength="32"></label><label><input id="clearSsid" type="checkbox"> ปิดการเชื่อมต่อ Wi-Fi</label>
+<small id="ssidStored">SSID ที่บันทึก: กำลังโหลด...</small>
+<label>แก้ไข Wi-Fi SSID (ว่าง = คงค่าเดิม)<input id="ssid" maxlength="32"></label><label><input id="clearSsid" type="checkbox"> ปิดการเชื่อมต่อ Wi-Fi</label>
+<small id="wifiPasswordStored">รหัส Wi-Fi ปัจจุบัน: กำลังโหลด...</small>
 <label>เปลี่ยนรหัส Wi-Fi<input id="wifiPassword" type="password" maxlength="64" autocomplete="new-password"></label>
 <label><input id="clearWifi" type="checkbox"> ล้างรหัส Wi-Fi (เครือข่ายเปิด)</label>
+<small id="usageTokenStored">Usage token ปัจจุบัน: กำลังโหลด...</small>
 <label>เปลี่ยน Usage bearer token<input id="usageToken" type="password" minlength="16" maxlength="128" autocomplete="new-password"></label>
 <label>หมุนหน้าอัตโนมัติ (0 ปิด หรือ 5–300 วินาที)<input id="autoRotateSeconds" type="number" min="0" max="300"></label></fieldset>
 <div id="sources"></div>
 <fieldset><legend>Touch calibration</legend><p>ตรวจมุมจอจริงก่อนแก้ ค่า JSON ใช้ swapAxes, invertX, invertY, minX, maxX, minY, maxY</p><textarea id="touch" spellcheck="false"></textarea></fieldset>
-<button>บันทึก</button><p id="status" role="status"></p></form>
+<button id="settingsButton" type="submit" disabled>บันทึก</button><p id="status" role="status"></p></form>
 <form id="display"><fieldset><legend>การแสดง usage ของ Codex</legend>
 <label>แสดงช่วง usage<select id="codexUsageMode"><option value="both">5h + Weekly</option><option value="weekly">Weekly อย่างเดียว</option></select></label>
 <button id="displayButton" type="submit" disabled>บันทึกการแสดง usage</button><p id="displayStatus" role="status"></p>
@@ -41,44 +44,82 @@ const $=id=>document.getElementById(id);
 for(const name of ['weather','stocks']){
  const box=document.createElement('fieldset');
  box.innerHTML=`<legend>${name==='weather'?'อากาศ':'หุ้นจาก Google Sheets'}</legend>
- <small id="${name}Stored"></small>
+ <small id="${name}Stored">URL ที่บันทึก: กำลังโหลด...</small>
  <label>แทนที่ URL (ว่าง = คงค่าเดิม)<input id="${name}Url" type="url" maxlength="1024" placeholder="https://..."></label>
  <label><input id="${name}Clear" type="checkbox"> ปิดแหล่งข้อมูล / ล้าง URL</label>
+ <small id="${name}HeadersStored">Headers ปัจจุบัน: กำลังโหลด...</small>
  <label>แทนที่ headers เป็น JSON (ว่าง = คงค่าเดิม, {} = ล้าง)<textarea id="${name}Headers" spellcheck="false" placeholder='{"Authorization":"Bearer ..."}'></textarea></label>
  <label>Refresh วินาที (30–86400)<input id="${name}Refresh" type="number" min="30" max="86400"></label>`;
  if(name==='weather')box.innerHTML+='<label>ชื่อสถานที่<input id="weatherLabel" maxlength="64"></label><label>Field mappings (JSON paths)<textarea id="weatherFields" spellcheck="false"></textarea></label>';
  $('sources').append(box);
 }
 let saved;
+let saving=false;
+const presence=value=>value===true?'ตั้งค่าแล้ว':value===false?'ยังไม่ตั้งค่า':'ไม่ทราบ';
+function unknownSettings(){
+ saved=undefined;$('settingsButton').disabled=true;
+ for(const id of ['ssidStored','wifiPasswordStored','usageTokenStored','weatherStored','stocksStored','weatherHeadersStored','stocksHeadersStored'])$(id).textContent='ค่าปัจจุบัน: ไม่ทราบ (โหลดไม่สำเร็จ)';
+}
 async function load(){
- const r=await fetch('/api/config',{cache:'no-store'});if(!r.ok)throw Error('โหลดการตั้งค่าไม่สำเร็จ');
- saved=await r.json();$('ssid').value='';$('clearSsid').checked=false;$('autoRotateSeconds').value=saved.autoRotateSeconds;$('touch').value=JSON.stringify(saved.touch,null,2);
- for(const n of ['weather','stocks']){
-  $(n+'Stored').textContent='URL ปัจจุบัน (ซ่อน query): '+(saved[n].url||'ยังไม่ตั้ง');
-  $(n+'Url').value='';$(n+'Headers').value='';$(n+'Clear').checked=false;$(n+'Refresh').value=saved[n].refreshSeconds;
- }
- $('weatherLabel').value=saved.weather.label;$('weatherFields').value=JSON.stringify(saved.weather.fields,null,2);
- $('wifiPassword').value='';$('usageToken').value='';$('clearWifi').checked=false;
+ saved=undefined;$('settingsButton').disabled=true;
+ try{
+  const r=await fetch('/api/config',{cache:'no-store'});if(!r.ok)throw Error('โหลดการตั้งค่าไม่สำเร็จ');
+  const current=await r.json();
+  // Do not permit writes from an incomplete or older redacted response.
+  const object=value=>value && typeof value==='object' && !Array.isArray(value);
+  if(typeof current.currentSSID!=='string' || typeof current.wifiPasswordConfigured!=='boolean' || typeof current.usageTokenConfigured!=='boolean' || !Number.isFinite(current.autoRotateSeconds) ||
+     !object(current.touch) || !['swapAxes','invertX','invertY'].every(key=>typeof current.touch[key]==='boolean') || !['minX','maxX','minY','maxY'].every(key=>Number.isFinite(current.touch[key])) ||
+     !object(current.weather?.fields) || !Object.values(current.weather.fields).every(value=>typeof value==='string') || typeof current.weather.label!=='string' ||
+     !['weather','stocks'].every(n=>object(current[n]) && typeof current[n].url==='string' && Number.isFinite(current[n].refreshSeconds) && typeof current[n].headersConfigured==='boolean' && typeof current[n].urlDetailsHidden==='boolean'))throw Error('โหลดการตั้งค่าไม่สำเร็จ');
+  $('ssid').value=current.currentSSID;$('ssidStored').textContent='SSID ที่บันทึก: '+(current.currentSSID||'ยังไม่ตั้งค่า');
+  $('wifiPasswordStored').textContent='รหัส Wi-Fi ปัจจุบัน: '+presence(current.wifiPasswordConfigured);
+  $('usageTokenStored').textContent='Usage token ปัจจุบัน: '+presence(current.usageTokenConfigured);
+  $('clearSsid').checked=false;$('autoRotateSeconds').value=current.autoRotateSeconds;$('touch').value=JSON.stringify(current.touch,null,2);
+  for(const n of ['weather','stocks']){
+   $(n+'Stored').textContent='URL ที่บันทึก: '+(current[n].url||'ยังไม่ตั้งค่า')+(current[n].urlDetailsHidden?' (ซ่อน query / fragment)':'');
+   $(n+'HeadersStored').textContent='Headers ปัจจุบัน: '+presence(current[n].headersConfigured);
+   $(n+'Url').value='';$(n+'Headers').value='';$(n+'Clear').checked=false;$(n+'Refresh').value=current[n].refreshSeconds;
+  }
+  $('weatherLabel').value=current.weather.label;$('weatherFields').value=JSON.stringify(current.weather.fields,null,2);
+  $('wifiPassword').value='';$('usageToken').value='';$('clearWifi').checked=false;
+  saved=current;$('settingsButton').disabled=false;
+ }catch(err){unknownSettings();throw err;}
+}
+function editedObject(text,current){
+ const value=JSON.parse(text);
+ if(!value || typeof value!=='object' || Array.isArray(value))throw Error('ตรวจสอบค่า JSON object');
+ return Object.fromEntries(Object.entries(value).filter(([key,item])=>item!==current[key]));
 }
 $('settings').addEventListener('submit',async e=>{
- e.preventDefault();$('status').textContent='กำลังบันทึก...';
+ e.preventDefault();if(saving)return;
  try{
-  if(!saved)throw Error('รอโหลดการตั้งค่า');
-  const patch={autoRotateSeconds:Number($('autoRotateSeconds').value),touch:JSON.parse($('touch').value)};
-  if($('clearSsid').checked)patch.ssid='';else if($('ssid').value)patch.ssid=$('ssid').value;
+  if(!saved)throw Error('รอโหลดการตั้งค่า / โหลดหน้าใหม่ก่อนบันทึก');
+  const patch={};
+  const rotate=Number($('autoRotateSeconds').value);if(rotate!==saved.autoRotateSeconds)patch.autoRotateSeconds=rotate;
+  const touch=editedObject($('touch').value,saved.touch);if(Object.keys(touch).length)patch.touch=touch;
+  if($('clearSsid').checked)patch.ssid='';else if($('ssid').value && $('ssid').value!==saved.currentSSID)patch.ssid=$('ssid').value;
   if($('clearWifi').checked)patch.wifiPassword='';else if($('wifiPassword').value)patch.wifiPassword=$('wifiPassword').value;
   if($('usageToken').value)patch.usageToken=$('usageToken').value;
   for(const n of ['weather','stocks']){
-   patch[n]={refreshSeconds:Number($(n+'Refresh').value)};
+   const source={};const refresh=Number($(n+'Refresh').value);if(refresh!==saved[n].refreshSeconds)source.refreshSeconds=refresh;
    // Never round-trip GET's redacted URL or any hidden secret.
-   if($(n+'Clear').checked)patch[n].url='';else if($(n+'Url').value)patch[n].url=$(n+'Url').value;
-   if($(n+'Headers').value.trim())patch[n].headers=JSON.parse($(n+'Headers').value);
+   if($(n+'Clear').checked)source.url='';else if($(n+'Url').value)source.url=$(n+'Url').value;
+   if($(n+'Headers').value.trim())source.headers=JSON.parse($(n+'Headers').value);
+   if(n==='weather'){
+    if($('weatherLabel').value!==saved.weather.label)source.label=$('weatherLabel').value;
+    const fields=editedObject($('weatherFields').value,saved.weather.fields);if(Object.keys(fields).length)source.fields=fields;
+   }
+   if(Object.keys(source).length)patch[n]=source;
   }
-  patch.weather.label=$('weatherLabel').value;patch.weather.fields=JSON.parse($('weatherFields').value);
+  if(!Object.keys(patch).length){$('status').textContent='ไม่มีการเปลี่ยนแปลง';return;}
+  saving=true;$('settingsButton').disabled=true;$('status').textContent='กำลังบันทึก...';
   const r=await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(patch)});
   if(!r.ok)throw Error(r.status===503?'Firmware maintenance busy หรือบันทึกไม่สำเร็จ ยังไม่เปลี่ยนค่า กรุณาลองอีกครั้ง':'ตรวจสอบค่า / สิทธิ์ (HTTP '+r.status+')');
-  await load();$('status').textContent='บันทึกแล้ว Wi-Fi จะเชื่อมต่อใหม่เมื่อเปลี่ยนค่า';
+  // The POST has committed even if fetching its new snapshot fails.
+  try{await load();}catch(_){$('status').textContent='บันทึกแล้ว แต่โหลดค่าปัจจุบันไม่สำเร็จ กรุณาโหลดหน้าใหม่ก่อนแก้ไขอีกครั้ง';return;}
+  $('status').textContent='บันทึกแล้ว Wi-Fi จะเชื่อมต่อใหม่เมื่อเปลี่ยนค่า';
  }catch(err){$('status').textContent=err.message;}
+ finally{saving=false;$('settingsButton').disabled=!saved;}
 });load().catch(e=>$('status').textContent=e.message);
 let displayLoaded=false;
 $('displayButton').disabled=true;

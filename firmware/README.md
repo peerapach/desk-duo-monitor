@@ -36,7 +36,7 @@ Package สร้าง `artifacts/desk-duo-cyd.bin`, `.sha256`, `.json`, `desk-
 
 กดแล้วปล่อย BOOT เพื่อแสดง/ซ่อนหน้าตั้งค่าอีกครั้ง โดยไม่ล้างค่า จอแสดง LAN IP หลัง Wi-Fi ต่อสำเร็จ ใช้ IP นี้แทน host ใน bridge config หาก Mac อยู่บน LAN เดียวกัน; ถ้า Mac ต่อ AP ใช้ `192.168.4.1` ไม่มี mDNS hostname ใน firmware รุ่นนี้
 
-ตั้ง Wi-Fi, URL อากาศ/หุ้น, headers แบบ JSON, field mappings, refresh 30–86400 วินาที, auto rotation 0/ปิด หรือ 5–300 วินาที และ token จาก portal ค่า SSID/password/token/URL/headers ที่เว้นว่างจะคงค่าเดิม การล้าง Wi-Fi หรือ URL ต้องเลือกช่องล้าง; headers `{}` คือล้างทั้งหมด GET settings แสดง URL ที่ตัด query และไม่แสดง SSID/password/token/headers จึงไม่ใช้ URL ที่เห็นนั้นเขียนกลับอัตโนมัติ
+ตั้ง Wi-Fi, URL อากาศ/หุ้น, headers แบบ JSON, field mappings, refresh 30–86400 วินาที, auto rotation 0/ปิด หรือ 5–300 วินาที และ token จาก portal ค่า SSID/password/token/URL/headers ที่เว้นว่างจะคงค่าเดิม การล้าง Wi-Fi หรือ URL ต้องเลือกช่องล้าง; headers `{}` คือล้างทั้งหมด GET settings สำหรับ Basic admin แสดง SSID ที่บันทึก (ไม่ใช่หลักฐานว่า radio ต่อเครือข่ายนี้อยู่), URL ที่ตัด query/fragment และสถานะตั้งค่าแล้ว/ยังไม่ตั้งค่าของรหัส Wi-Fi, usage token และ headers โดยไม่เปิดเผยค่าลับ ช่องแทนที่ URL/รหัส/token/headers ยังคงว่าง และส่งเฉพาะค่าที่แก้ไขจาก snapshot ที่โหลดสำเร็จ; ไม่แก้ไขจะไม่ POST หากโหลดไม่สำเร็จจะแสดงไม่ทราบและปิดบันทึก หากบันทึกสำเร็จแต่โหลดใหม่ล้มเหลวจะแจ้งว่าบันทึกแล้วและต้องโหลดหน้าใหม่ก่อนแก้ต่อ metadata นี้อยู่เฉพาะ public response ไม่เปลี่ยน Config หรือ bytes ใน NVS ส่วน Codex display form ยังโหลด/บันทึกแยกกัน
 
 เลือกการแสดง usage ของ Codex ในฟอร์มแยก: `5h + Weekly` (ค่าเริ่มต้น) หรือ `Weekly อย่างเดียว` บันทึกแล้วจอเปลี่ยนทันทีโดยไม่ reboot ฟอร์มนี้ไม่เปลี่ยน Wi-Fi/แหล่งข้อมูล/ค่าลับ และยังกดบันทึกไม่ได้จนโหลดค่าปัจจุบันสำเร็จ
 

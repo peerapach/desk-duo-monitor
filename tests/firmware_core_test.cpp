@@ -4,6 +4,7 @@
 #include "../firmware/main/assets.hpp"
 #include "../firmware/main/runtime.hpp"
 
+#include "cJSON.h"
 #include <cmath>
 #include <fstream>
 #include <iostream>
@@ -318,6 +319,59 @@ void configContract(const std::string& root) {
     CHECK(redacted.find("stocks-secret") == std::string::npos);
     CHECK(redacted.find("key=weather-secret") == std::string::npos);
     CHECK(redacted.find("https://weather.example/v1") != std::string::npos);
+    CHECK(redacted.find(R"("currentSSID":"home")") != std::string::npos);
+    CHECK(redacted.find(R"("wifiPasswordConfigured":true)") != std::string::npos);
+    CHECK(redacted.find(R"("usageTokenConfigured":true)") != std::string::npos);
+    CHECK(redacted.find(R"("headersConfigured":true)") != std::string::npos);
+    CHECK(redacted.find(R"("headersConfigured":false)") != std::string::npos);
+    CHECK(redacted.find(R"("urlDetailsHidden":true)") != std::string::npos);
+    CHECK(redacted.find(R"("wifiPassword":)") == std::string::npos);
+    CHECK(redacted.find(R"("usageToken":)") == std::string::npos);
+    CHECK(redacted.find(R"("setupPassword":)") == std::string::npos);
+    CHECK(redacted.find(R"("headers":)") == std::string::npos);
+    cJSON* publicJson = cJSON_Parse(redacted.c_str());
+    CHECK(publicJson != nullptr);
+    CHECK(cJSON_GetArraySize(publicJson) == 7);
+    const cJSON* weatherMetadata = cJSON_GetObjectItemCaseSensitive(publicJson, "weather");
+    const cJSON* stocksMetadata = cJSON_GetObjectItemCaseSensitive(publicJson, "stocks");
+    CHECK(cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(weatherMetadata, "headersConfigured")));
+    CHECK(cJSON_IsFalse(cJSON_GetObjectItemCaseSensitive(stocksMetadata, "headersConfigured")));
+    CHECK(cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(weatherMetadata, "urlDetailsHidden")));
+    CHECK(cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(stocksMetadata, "urlDetailsHidden")));
+    CHECK(cJSON_GetArraySize(weatherMetadata) == 6);
+    CHECK(cJSON_GetArraySize(stocksMetadata) == 4);
+    cJSON_Delete(publicJson);
+
+
+    const auto unset = deskduo::redactedConfig(config);
+    CHECK(unset.find(R"("currentSSID":"")") != std::string::npos);
+    CHECK(unset.find(R"("wifiPasswordConfigured":false)") != std::string::npos);
+    CHECK(unset.find(R"("usageTokenConfigured":false)") != std::string::npos);
+    CHECK(unset.find(R"("headersConfigured":true)") == std::string::npos);
+    CHECK(unset.find(R"("urlDetailsHidden":true)") == std::string::npos);
+    CHECK(unset.find(R"("urlDetailsHidden":false)") != std::string::npos);
+    auto fragment = config;
+    fragment.stocks.url = "https://stocks.example/v1#private-fragment";
+    CHECK(deskduo::redactedConfig(fragment).find("private-fragment") == std::string::npos);
+    CHECK(deskduo::redactedConfig(fragment).find(R"("urlDetailsHidden":true)") != std::string::npos);
+
+    // Literal bytes from the established persisted shape: public metadata must
+    // never change records read by older firmware's strict stored parser.
+    internal.weather.fields = {{"temperature", "current.temp"}};
+    const std::string establishedBytes = R"({"ssid":"home","wifiPassword":"wifi-pass","usageToken":"0123456789abcdef","setupPassword":"generated-setup-password","weather":{"url":"https://weather.example/v1?key=weather-secret","refreshSeconds":600,"label":"Bangkok","fields":{"temperature":"current.temp"},"headers":{"X-Feed":"feed-secret"}},"stocks":{"url":"https://stocks.example/v1?accessToken=stocks-secret","refreshSeconds":300,"headers":{}},"touch":{"swapAxes":true,"invertX":false,"invertY":true,"minX":100,"maxX":3900,"minY":200,"maxY":3800},"autoRotateSeconds":30})";
+    CHECK(deskduo::serializeConfig(internal) == establishedBytes);
+    CHECK(deskduo::parseStoredConfig(establishedBytes).value.has_value());
+    CHECK(!deskduo::applyConfigPatch(internal, R"({"currentSSID":"other"})").value.has_value());
+    CHECK(!deskduo::parseStoredConfig(R"({"wifiPasswordConfigured":true})").value.has_value());
+    const auto changedOnly = deskduo::applyConfigPatch(internal, R"({"touch":{"invertX":true},"weather":{"fields":{"temperature":"data.temp"}}})");
+    CHECK(changedOnly.value.has_value());
+    CHECK(changedOnly.value->weather.url == internal.weather.url);
+    CHECK(changedOnly.value->weather.headers == internal.weather.headers);
+    CHECK(changedOnly.value->wifiPassword == internal.wifiPassword);
+    CHECK(changedOnly.value->usageToken == internal.usageToken);
+    CHECK(changedOnly.value->touch.minX == internal.touch.minX);
+    CHECK(changedOnly.value->touch.invertX);
+
 }
 
 void modelContract() {
