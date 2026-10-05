@@ -582,8 +582,9 @@ $('display').addEventListener('submit',async e=>{
   displaySaving=true;$('displayButton').disabled=true;put('displayStatus',()=>t("กำลังบันทึก..."));
   const r=await fetch('/api/display',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(patch)});
   if(!r.ok)throw issue(()=>r.status===503?t("ยังบันทึกไม่ได้ กรุณาลองอีกครั้ง"):t("ตรวจสอบค่า / สิทธิ์ (HTTP ")+r.status+')');
-  // Persisted response is read back rather than treating the local selection as saved.
-  displayLoaded=false;
+  // An accepted POST makes the previous saved snapshot obsolete. Keep the
+  // selection/editors, but report saved language as unknown until readback.
+  displayLoaded=false;displaySaved=undefined;languageReadback();
   try{await loadDisplay();}catch(_){put('displayStatus',()=>t("บันทึกแล้ว แต่โหลดการแสดงผลไม่สำเร็จ กรุณาโหลดหน้าใหม่"));return;}
   put('displayStatus',()=>t("บันทึกการแสดง usage แล้ว"));
  }catch(err){put('displayStatus',()=>errorText(err));}

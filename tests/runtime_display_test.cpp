@@ -8,7 +8,8 @@ namespace {
 std::string configBlob;
 std::optional<uint8_t> savedPreference;
 uint8_t legacyMode=0;
-int preferenceWrites=0,blobWrites=0,commits=0,reads=0;
+int preferenceWrites=0,blobWrites=0,commits=0,reads=0,legacyReads=0;
+int preferenceReadError=ESP_OK,legacyReadError=ESP_OK;
 bool commitFails=false,setFails=false,openFails=false;
 deskduo::DisplaySettings expectedDuringCommit;
 }
@@ -21,8 +22,9 @@ int nvs_get_blob(nvs_handle_t,const char* key,void* data,std::size_t* size){++re
 int nvs_set_blob(nvs_handle_t,const char* key,const void* data,std::size_t size){++blobWrites;assert(std::string(key)=="config");configBlob.assign(static_cast<const char*>(data),size);return ESP_OK;}
 int nvs_get_u8(nvs_handle_t,const char* key,uint8_t* value){
  ++reads;
- if(std::string(key)=="codex_layout"){*value=legacyMode;return ESP_OK;}
+ if(std::string(key)=="codex_layout"){++legacyReads;if(legacyReadError!=ESP_OK)return legacyReadError;*value=legacyMode;return ESP_OK;}
  assert(std::string(key)=="ui_pref");
+ if(preferenceReadError!=ESP_OK)return preferenceReadError;
  if(!savedPreference)return ESP_ERR_NVS_NOT_FOUND;
  *value=*savedPreference;return ESP_OK;
 }
@@ -80,6 +82,23 @@ int main(){
  savedPreference.reset();legacyMode=1;beforeWrites=preferenceWrites;beforeCommits=commits;
  runtime_init();assert(runtime_display_mode()==CodexUsageMode::Weekly && runtime_language()==Language::Thai && beforeWrites==preferenceWrites && beforeCommits==commits);
  savedPreference=255;runtime_init();assert(runtime_display_mode()==CodexUsageMode::Weekly && runtime_language()==Language::Thai && savedPreference==255 && beforeWrites==preferenceWrites);
+ // A stored value with a different NVS type is invalid preference data,
+ // not a fatal storage operation; the legacy layout is only a fallback.
+ preferenceReadError=ESP_ERR_NVS_TYPE_MISMATCH;beforeWrites=preferenceWrites;beforeCommits=commits;
+ try{runtime_init();}catch(int error){std::cerr<<"Stored preference type unexpectedly fatal: "<<error<<"\n";assert(false);}
+ assert(runtime_language()==Language::Thai && runtime_display_mode()==CodexUsageMode::Weekly);
+ assert(preferenceWrites==beforeWrites && commits==beforeCommits && configBlob==original && blobWrites==0);
+ preferenceReadError=ESP_OK;savedPreference=2;legacyMode=255;const auto oldLegacyReads=legacyReads;
+ runtime_init();assert(runtime_display_mode()==CodexUsageMode::Both && runtime_language()==Language::English && legacyReads==oldLegacyReads);
+ assert(preferenceWrites==beforeWrites && commits==beforeCommits && configBlob==original && blobWrites==0);
+ // Genuine read failures must reach the existing SDK fatal-check boundary.
+ preferenceReadError=ESP_FAIL;bool storageFailure=false;
+ try{runtime_init();}catch(int error){storageFailure=error==ESP_FAIL;}
+ assert(storageFailure && legacyReads==oldLegacyReads && preferenceWrites==beforeWrites && commits==beforeCommits);
+ preferenceReadError=ESP_OK;savedPreference.reset();legacyMode=1;legacyReadError=ESP_FAIL;storageFailure=false;
+ try{runtime_init();}catch(int error){storageFailure=error==ESP_FAIL;}
+ assert(storageFailure && preferenceWrites==beforeWrites && commits==beforeCommits && configBlob==original && blobWrites==0);
+ legacyReadError=ESP_OK;runtime_init();assert(completeSerialization(runtime_config().config,original));
  // Diagnostic data keeps the existing source-generation admission behavior.
  const auto beforeDiagnosticReads=reads;
  auto view=runtime_weather_view();assert(view.generation==runtime_config().generation && !view.configured && !view.weather.data);
@@ -89,5 +108,5 @@ int main(){
  runtime_weather({value,{}},view.generation+1);assert(runtime_weather_view().weather.stale);
  assert(reads==beforeDiagnosticReads && configBlob==original && blobWrites==0);
  assert(completeSerialization(runtime_config().config,original) && parseStoredConfig(original).value);
- std::cout<<"Production runtime: packed scalar single-write, legacy fallback unchanged, default Thai/no write, reload, open/set/commit failure, coherent commit-before-publish, no tick NVS reads, config/secrets/calibration preserved\n";
+ std::cout<<"Production runtime: packed scalar single-write, authoritative key ignores invalid legacy, type mismatch defaults Thai/no write, read errors remain fatal, reload, open/set/commit failure, coherent commit-before-publish, no tick NVS reads, config/secrets/calibration preserved\n";
 }

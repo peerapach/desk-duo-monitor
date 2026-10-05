@@ -59,20 +59,24 @@ void runtime_init() {
         ESP_ERROR_CHECK(saved.value ? ESP_OK : ESP_ERR_INVALID_STATE);
         config = std::move(*saved.value);
     } else ESP_ERROR_CHECK(result == ESP_ERR_NVS_NOT_FOUND ? ESP_OK : result);
-    uint8_t savedMode = 0;
-    result = nvs_get_u8(handle, "codex_layout", &savedMode);
-    ESP_ERROR_CHECK(result == ESP_ERR_NVS_NOT_FOUND ? ESP_OK : result);
-    ESP_ERROR_CHECK(savedMode <= 1 ? ESP_OK : ESP_ERR_INVALID_STATE);
     uint8_t savedPreference = 0;
     result = nvs_get_u8(handle, "ui_pref", &savedPreference);
-    ESP_ERROR_CHECK(result == ESP_ERR_NVS_NOT_FOUND ? ESP_OK : result);
-    // The existing layout is a read-only migration fallback. A single NVS
-    // scalar stores both preferences: set_u8 is durable in the pinned IDF,
-    // while commit is a no-op, so separate writes cannot be atomic.
+    ESP_ERROR_CHECK(result == ESP_ERR_NVS_NOT_FOUND || result == ESP_ERR_NVS_TYPE_MISMATCH ? ESP_OK : result);
+    // The authoritative packed key takes precedence over obsolete legacy
+    // data. Missing/invalid preference data falls back without rewriting NVS;
+    // operational read errors still reach the existing fatal SDK check.
+    // One scalar is necessary because the pinned IDF writes on set_u8 while
+    // commit is a no-op, so separate preference writes cannot be atomic.
     if (result == ESP_OK && savedPreference <= 3)
         displayPreference.initialize(static_cast<CodexUsageMode>(savedPreference & 1),
             static_cast<Language>((savedPreference >> 1) & 1));
-    else displayPreference.initialize(static_cast<CodexUsageMode>(savedMode), Language::Thai);
+    else {
+        uint8_t savedMode = 0;
+        result = nvs_get_u8(handle, "codex_layout", &savedMode);
+        ESP_ERROR_CHECK(result == ESP_ERR_NVS_NOT_FOUND ? ESP_OK : result);
+        ESP_ERROR_CHECK(savedMode <= 1 ? ESP_OK : ESP_ERR_INVALID_STATE);
+        displayPreference.initialize(static_cast<CodexUsageMode>(savedMode), Language::Thai);
+    }
     nvs_close(handle);
     bool changed = false;
     // Enable the documented internal entropy source before Wi-Fi starts.

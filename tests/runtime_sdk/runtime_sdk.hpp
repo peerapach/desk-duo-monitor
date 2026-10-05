@@ -5,9 +5,12 @@
 using esp_err_t=int;
 using nvs_handle_t=int;
 using SemaphoreHandle_t=int;
-constexpr int ESP_OK=0, ESP_FAIL=-1, ESP_ERR_INVALID_SIZE=-2, ESP_ERR_INVALID_STATE=-3, ESP_ERR_NVS_NOT_FOUND=-4;
+constexpr int ESP_OK=0, ESP_FAIL=-1, ESP_ERR_INVALID_SIZE=-2, ESP_ERR_INVALID_STATE=-3, ESP_ERR_NVS_NOT_FOUND=-4, ESP_ERR_NVS_TYPE_MISMATCH=-5;
 constexpr int NVS_READWRITE=1, portMAX_DELAY=0, ESP_MAC_WIFI_SOFTAP=0;
-#define ESP_ERROR_CHECK(expr) assert((expr)==ESP_OK)
+// A test-boundary exception exposes the error passed to the SDK fatal check
+// without terminating the entire native test process.
+inline void runtime_sdk_error_check(int code){if(code!=ESP_OK)throw code;}
+#define ESP_ERROR_CHECK(expr) runtime_sdk_error_check(expr)
 int xSemaphoreCreateMutex();
 int xSemaphoreTake(int,int);
 int xSemaphoreGive(int);

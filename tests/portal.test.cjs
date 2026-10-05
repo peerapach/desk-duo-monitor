@@ -284,10 +284,15 @@ test('failed display save and failed readback never claim selected language save
  const p=await portal({displaySave:false});p.get('language').value='en';p.get('language').change();
  await p.displaySubmit();assert.match(p.get('displayStatus').textContent,/Could not save/);
  assert.match(p.get('languageStored').textContent,/Thai.*Not saved/);assert.equal(p.get('codexUsageMode').value,'weekly');
- const q=await portal({displayReload:false});q.get('language').value='en';q.get('language').change();q.get('codexUsageMode').value='both';
+ const q=await portal({displayReload:false});q.get('weatherLabel').value='Unsaved editor';q.get('language').value='en';q.get('language').change();q.get('codexUsageMode').value='both';
  await q.displaySubmit();assert.deepEqual(q.displayRequests,[{codexUsageMode:'both',language:'en'}]);
  assert.match(q.get('displayStatus').textContent,/Saved.*readback failed/);assert.equal(q.get('displayButton').disabled,true);
- assert.match(q.get('languageStored').textContent,/Thai.*Not saved/);
+ assert.equal(q.get('languageStored').textContent,'Saved language unknown');
+ assert.equal(q.get('language').value,'en');assert.equal(q.get('codexUsageMode').value,'both');
+ assert.equal(q.get('weatherLabel').value,'Unsaved editor');assert.equal(q.requests.length,0);
+ q.get('language').value='th';q.get('language').change();assert.match(q.get('languageStored').textContent,/ไม่ทราบ/);
+ assert.doesNotMatch(q.get('languageStored').textContent,/ยังไม่ได้บันทึก/);
+ await q.displaySubmit();assert.equal(q.displayRequests.length,1);
 });
 
 test('firmware picker copy follows selected language and keeps exact selected filename',async()=>{
