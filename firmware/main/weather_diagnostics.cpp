@@ -71,7 +71,7 @@ std::string weatherDiagnosticsJson(const WeatherAttempt& a, const WeatherView& c
     number(weather, "temperature", w.data ? w.data->temperature : std::nullopt);
     number(weather, "humidity", w.data ? w.data->humidity : std::nullopt);
     number(weather, "weatherCode", w.data ? w.data->weatherCode : std::nullopt);
-    cJSON_AddNumberToObject(weather, "hourlyCount", w.data ? w.data->hourlyCount : 0);
+    number(weather, "hourlyCount", w.data ? std::optional<std::size_t>(w.data->hourlyCount) : std::nullopt);
     char* encoded = cJSON_PrintUnformatted(root);
     std::string result = encoded ? encoded : "{}";
     std::free(encoded); cJSON_Delete(root); return result;

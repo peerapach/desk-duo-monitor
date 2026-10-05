@@ -22,7 +22,8 @@ int main() {
  auto* weather=cJSON_GetObjectItemCaseSensitive(root,"weather");
  assert(cJSON_GetArraySize(weather)==8);
  assert(cJSON_IsFalse(cJSON_GetObjectItemCaseSensitive(weather,"hasData")));
- assert(cJSON_IsNull(cJSON_GetObjectItemCaseSensitive(weather,"ageMs")));cJSON_Delete(root);
+ assert(cJSON_IsNull(cJSON_GetObjectItemCaseSensitive(weather,"ageMs")));
+ assert(cJSON_IsNull(cJSON_GetObjectItemCaseSensitive(weather,"hourlyCount")));cJSON_Delete(root);
  auto record=collector.begin(9,100,false);
  assert(record.attempted && record.outcome==WeatherOutcome::Running);
  record.fail(WeatherOutcome::TlsFailure,WeatherPhase::Tls);
