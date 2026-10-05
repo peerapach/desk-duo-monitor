@@ -224,6 +224,52 @@ void weatherChecks(){
     std::cout<<"Weather LVGL heap after 40 page rebuild cycles: "<<after.total_size-after.free_size<<" bytes; free "<<after.free_size<<" bytes\n";
     data.weather=originalWeather;
     clockMs+=1000;capture("weather-navigation-cycled.ppm");weatherLabel("31.0");
+    auto* currentContent=lv_obj_get_parent(weatherLabel("31.0"));
+    // The device stays in Asia/Bangkok throughout. Hand-written local hours
+    // correspond to each normalized UTC epoch plus the source's own offset.
+    // These cases catch accidental use of localtime_r and treating offset0
+    // as missing, with both previous-day and next-day midnight rollover.
+    struct TimezoneCase { int64_t epoch; int32_t offset; const char* name; std::array<const char*,4> times; };
+    const TimezoneCase timezoneCases[]={
+        {1791153900,19800,"positive",{"04:15","05:15","06:15","07:15"}},
+        {1791162000,-18000,"negative",{"20:00","21:00","22:00","23:00"}},
+        {1791154800,0,"utc",{"23:00","00:00","01:00","02:00"}},
+        {1791162000,-12600,"negative-fractional",{"21:30","22:30","23:30","00:30"}}
+    };
+    data.weatherLabel="สถานีทดสอบ";
+    for(const auto& fixture:timezoneCases){
+        data.weather.data->utcOffsetSeconds=fixture.offset;
+        for(int k=0;k<4;++k)data.weather.data->hourlyTimes[k]=fixture.epoch+k*3600;
+        clockMs+=1000;capture((std::string("weather-timezone-")+fixture.name+".ppm").c_str());
+        for(int k=0;k<4;++k){
+            auto* hour=weatherLabel(fixture.times[k]);assertTextFits(hour);
+            assert(lv_obj_get_x(hour)==12+54*k && lv_obj_get_y(hour)==136);
+            assert(lv_obj_get_x(weatherLabel(readings[k]))==lv_obj_get_x(hour));
+        }
+        // The source formatter must not mutate TZ or the device clock zone.
+        time_t epoch=fixture.epoch;struct tm device{};assert(localtime_r(&epoch,&device));
+        assert(device.tm_hour==static_cast<int>((fixture.epoch/3600+7)%24));
+    }
+    data.weather.data->hourlyTimes[1].reset();
+    clockMs+=1000;capture("weather-timezone-missing-timestamp.ppm");
+    assert(!findLabel(lv_screen_active(),"22:30"));
+    assert(!mintNear(93,213));
+    data.weather.data->hourlyTimes[1]=1791165600;
+    data.weather.data->utcOffsetSeconds.reset();
+    clockMs+=1000;capture("weather-timezone-missing-offset.ppm");
+    unsigned unknownHours=0;
+    for(uint32_t i=0;i<lv_obj_get_child_count(currentContent);++i){
+        auto* child=lv_obj_get_child(currentContent,i);
+        if(lv_obj_check_type(child,&lv_label_class) && lv_obj_get_y(child)==136){
+            assert(std::strcmp(lv_label_get_text(child),"--")==0 && "source-local time without a source offset must remain unknown");
+            ++unknownHours;
+        }
+    }
+    assert(unknownHours==4);
+    assert(mintNear(39,220) && mintNear(93,213) && mintNear(147,207) && mintNear(201,200));
+    data.weather=originalWeather;data.weatherLabel="กรุงเทพฯ";
+    clockMs+=1000;deskduo::ui_tick();
+    std::cout<<"Weather source-timezone: positive/negative/fractional/UTC0, midnight rollover, missing timestamp/offset, unchanged Bangkok device zone passed\n";
     std::cout<<"Calm weather: fresh/unknown/sparse/zero/flat/stale, exact WMO groups, native font bounds, long Thai, signed extremes, and 40 rebuild cycles passed\n";
 }
 int main(){
@@ -290,6 +336,7 @@ int main(){
     data.claude.data=usage;data.claude.unknown=false;data.claude.receivedAtMs=1000;
     usage.primary->usedPercent=58;usage.secondary->usedPercent=21;data.codex.data=usage;data.codex.unknown=false;
     deskduo::Weather w;w.temperature=31;w.humidity=68;w.weatherCode=2;
+    w.utcOffsetSeconds=25200;
     w.hourlyCount=4;
     for(int k=0;k<4;++k){w.hourlyTimes[k]=1791097200+k*3600;w.hourlyTemperatures[k]=32+k;w.hourlyRainProbability[k]=35+k;}
     data.weatherLabel="กรุงเทพฯ";data.weather.data=w;data.weather.unknown=false;

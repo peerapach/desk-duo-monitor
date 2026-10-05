@@ -82,9 +82,12 @@ std::string percentage(std::optional<double> value) {
     if(!value || !std::isfinite(*value) || *value<0 || *value>100)return "--";
     char result[12];std::snprintf(result,sizeof(result),"%.0f%%",*value);return result;
 }
-std::string timeText(int64_t epoch) {
-    time_t raw=epoch;struct tm local{};
-    if(!localtime_r(&raw,&local))return "--";
+std::string timeText(int64_t epoch,std::optional<int32_t> sourceOffset) {
+    if(!sourceOffset)return "--";
+    // Epochs are normalized UTC by the parser. Shift to the feed's local
+    // clock, then format as UTC so the device's timezone is never applied.
+    time_t raw=epoch+*sourceOffset;struct tm local{};
+    if(!gmtime_r(&raw,&local))return "--";
     char result[12];std::strftime(result,sizeof(result),"%H:%M",&local);return result;
 }
 void stroke(lv_layer_t* layer,const lv_area_t& bounds,int x1,int y1,int x2,int y2,
@@ -253,7 +256,7 @@ void weather_view_update(const Snapshot& snapshot,uint64_t nowMs) {
     for(std::size_t k=0;k<4;++k) {
         auto& point=view.points[k];std::string time="--",temperature="--",rain="--";
         if(point.valid) {
-            time=timeText(*weather->hourlyTimes[k]);temperature=temperatureText(weather->hourlyTemperatures[k],true);
+            time=timeText(*weather->hourlyTimes[k],weather->utcOffsetSeconds);temperature=temperatureText(weather->hourlyTemperatures[k],true);
             // Rare wide signed values retain their value at the minimum 12px
             // scale. Ordinary annotations always use the approved 14px font.
             const lv_font_t* font=&lv_font_montserrat_14;
