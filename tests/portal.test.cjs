@@ -26,12 +26,13 @@ async function portal(options={}) {
   const settings = {currentSSID:'saved-network',wifiPasswordConfigured:true,usageTokenConfigured:true,autoRotateSeconds:20, touch:{swapAxes:false,invertX:false,invertY:false,minX:0,maxX:4095,minY:0,maxY:4095},
     weather:{url:'https://weather.test/data',headersConfigured:true,urlDetailsHidden:true,label:'Bangkok',fields:{temperature:'current.temperature_2m'},refreshSeconds:900},
     stocks:{url:'https://script.test/exec',headersConfigured:false,urlDetailsHidden:false,refreshSeconds:300},...options.settings};
-  const requests = [];const displayRequests=[];
+  const requests = [];const displayRequests=[];const networkRequests=[];const networkLoad=options.networkLoad,networkStatus=options.networkStatus,networkReply=options.networkReply;let network=options.network||{stationOnline:true,weatherConfigured:true,currentGeneration:7,weather:{hasData:false,unknown:true,stale:false,ageMs:null,temperature:null,humidity:null,weatherCode:null,hourlyCount:0},attempt:{attempted:false,currentGeneration:true,outcome:'not_attempted',httpStatus:null}};
   const context = vm.createContext({
     setTimeout(fn){const id=++nextTimer;timers.set(id,fn);return id;},clearTimeout(id){timers.delete(id);},AbortController,
     XMLHttpRequest:class {constructor(){this.upload={};this.headers={};uploads.push(this);}open(method,url){this.method=method;this.url=url;}setRequestHeader(k,v){this.headers[k]=v;}send(file){this.file=file;}},
     document:{getElementById:get,createElement(){return {innerHTML:''};}},
     fetch:async (url, options) => {
+      if(url==='/api/network'){networkRequests.push(options);if(options.method)throw Error('status must be read only');if(networkReply)return await networkReply();if(networkLoad===false)throw Error('network private error');return {ok:networkStatus!==503,status:networkStatus||200,json:async()=>structuredClone(network)};}
       if(url==='/api/display'){if(!options.method){if(!displayLoad)throw Error('offline');return {ok:true,json:async()=>({codexUsageMode:'weekly'})};}displayRequests.push(JSON.parse(options.body));return {ok:true,status:204};}
       if(url==='/api/firmware')return {ok:true,status:200,json:async()=>structuredClone(firmware)};
       if(url!=='/api/config')throw Error('unexpected URL '+url);
@@ -61,7 +62,7 @@ async function portal(options={}) {
   vm.runInContext(production,context);
   await new Promise(resolve=>setImmediate(resolve));
   const submit = async () => {await get('settings').submit({preventDefault(){}}); return requests.at(-1);};
-  return {get,submit,requests,markup,displayRequests,displaySubmit:()=>get("display").submit({preventDefault(){}}),uploads,timers,setFirmware(value){firmware=value;},firmwareSubmit:()=>get("firmware").submit({preventDefault(){}})};
+  return {get,submit,requests,markup,displayRequests,networkRequests,setNetwork(value){network=value;},networkRefresh:()=>get('networkRefresh').click(),displaySubmit:()=>get("display").submit({preventDefault(){}}),uploads,timers,setFirmware(value){firmware=value;},firmwareSubmit:()=>get("firmware").submit({preventDefault(){}})};
 }
 
 test('unchanged settings never POST and changed source fields omit hidden values', async()=>{
@@ -217,4 +218,41 @@ test('display form loads and saves independently of Wi-Fi/source settings',async
 test('display save stays guarded when initial load fails',async()=>{
  const p=await portal(false);assert.equal(p.get('displayButton').disabled,true);
  await p.displaySubmit();assert.equal(p.displayRequests.length,0);
+});
+
+// Catch diagnostics failure disabling saves, writing config, leaking raw errors, or scheduling polling.
+test('weather status is read only and failure is isolated from settings and display',async()=>{
+ const p=await portal({networkLoad:false});
+ assert.ok(p.get('networkRefresh'),'missing manual status refresh');
+ assert.match(p.get('weatherDataStatus').textContent,/ไม่ทราบ.*ไม่สำเร็จ/);
+ assert.doesNotMatch(p.get('weatherDataStatus').textContent,/private/);
+ assert.equal(p.get('settingsButton').disabled,false);
+ p.get('weatherLabel').value='Forecast';await p.submit();assert.deepEqual(p.requests,[{weather:{label:'Forecast'}}]);
+ await p.networkRefresh();assert.ok(p.networkRequests.every(o=>!o.method));assert.equal(p.timers.size,0);
+ p.get('codexUsageMode').value='both';await p.displaySubmit();assert.equal(p.displayRequests.length,1);
+});
+test('manual status reports actual stale values and old generation waits for new settings',async()=>{
+ const p=await portal();assert.ok(p.get('networkRefresh'),'missing manual status refresh');
+ assert.match(p.get('weatherDataStatus').textContent,/ยังไม่มีข้อมูล.*รอ/);
+ const value={stationOnline:true,weatherConfigured:true,currentGeneration:8,weather:{hasData:true,unknown:false,stale:true,ageMs:61000,temperature:29.6,humidity:76,weatherCode:3,hourlyCount:4},attempt:{attempted:true,currentGeneration:true,outcome:'http_status',httpStatus:503,tlsCode:-12345}};
+ p.setNetwork(value);await p.networkRefresh();assert.match(p.get('weatherDataStatus').textContent,/เก่า.*29.6.*76.*503/);assert.doesNotMatch(p.get('weatherDataStatus').textContent,/12345/);
+ value.weather.hasData=false;value.attempt.outcome='accepted';value.attempt.currentGeneration=false;p.setNetwork(value);await p.networkRefresh();assert.match(p.get('weatherDataStatus').textContent,/รอ.*ตั้งค่าปัจจุบัน/);assert.doesNotMatch(p.get('weatherDataStatus').textContent,/รับข้อมูลแล้ว/);
+ assert.equal(p.requests.length,0);assert.equal(p.timers.size,0);
+});
+test('weather failures use friendly clock HTTPS HTTP and format statuses',async()=>{
+ const p=await portal();assert.ok(p.get('networkRefresh'),'missing manual status refresh');
+ for(const [outcome,text] of [['clock_wait',/รอเวลา/],['tls_failure',/HTTPS/],['dns_failure',/เครือข่าย/],['parse_failure',/รูปแบบ/],['http_status',/HTTP 429/]]){
+ p.setNetwork({stationOnline:true,weatherConfigured:true,weather:{hasData:false},attempt:{attempted:true,currentGeneration:true,outcome,httpStatus:429}});await p.networkRefresh();assert.match(p.get('weatherDataStatus').textContent,text);
+ }
+});
+
+// Catch acceptance from the pre-save source remaining visible after a source change.
+test('committed settings invalidate old acceptance including an in-flight status response',async()=>{
+ const accepted={stationOnline:true,weatherConfigured:true,weather:{hasData:true,temperature:29.6},attempt:{attempted:true,currentGeneration:true,outcome:'accepted'}};
+ const p=await portal({network:accepted});assert.match(p.get('weatherDataStatus').textContent,/รับข้อมูลแล้ว/);
+ p.get('weatherLabel').value='New source';await p.submit();assert.doesNotMatch(p.get('weatherDataStatus').textContent,/รับข้อมูลแล้ว/);assert.match(p.get('weatherDataStatus').textContent,/รอ.*สถานะ.*ปัจจุบัน/);
+ let finish;const delayed=await portal({networkReply:()=>new Promise(resolve=>{finish=resolve;})});
+ delayed.get('weatherLabel').value='New source';await delayed.submit();finish({ok:true,json:async()=>accepted});
+ await new Promise(resolve=>setImmediate(resolve));
+ assert.doesNotMatch(delayed.get('weatherDataStatus').textContent,/รับข้อมูลแล้ว/);assert.equal(delayed.get('networkRefresh').disabled,false);
 });

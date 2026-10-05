@@ -134,3 +134,27 @@ rtk proxy .venv/bin/python scripts/pio.py run -d tests/rollback_probe -e rollbac
 ```
 
 ไฟล์ทดสอบคือ `tests/rollback_probe/.pio/build/rollback_probe/firmware.bin` (project `desk_duo`, version `rollback-probe`). **อย่าแจกเป็น release อย่า flash probe ผ่าน USB** หลังเตรียม USB recovery และยืนยัน known-good app แล้วจึง upload probe ผ่าน authenticated OTA เพื่อทดลอง bootloader rollback; บันทึกว่า version/slot กลับเป็นค่าเดิมจริง ก่อนเรียก rollback ว่าผ่าน Hardware-only checks ยังต้องทดสอบ settings หลัง migration, successful upload/reconnect/usage hook, truncated upload ไม่เปลี่ยน slot และ rollback จริง
+
+
+Administrator `GET /api/network` reads the latest bounded weather attempt and
+current accepted weather status. Usage Bearer credentials cannot read it. The
+portal's **อัปเดตสถานะ** button only reads this status; it does not trigger a
+source fetch. A failed status read does not block saving settings. A committed settings save
+invalidates prior status, including responses already in flight; read status
+again to inspect the current settings.
+
+Diagnostics live in RAM and reset on reboot. They contain generation and
+monotonic attempt/next-due times, current station and clock readiness (epoch
+threshold, not an SNTP synchronization claim), whitelisted outcomes/parser
+reasons, observed numeric HTTP/TLS/socket errors, bounded byte/redirect counts,
+and internal 8-bit heap measurements. HTTP and TLS observations describe the
+latest attempted redirect hop; unavailable error/status values are `null`.
+The accepted temperature/humidity/code/hourly count and age come from the
+runtime weather snapshot. `attempt.currentGeneration` distinguishes old
+attempt evidence from the current saved source configuration. While a fetch
+is running, the published record reports running; terminal phase/error details
+appear when that attempt finishes. No URL, query, redirect target, headers,
+response payload, credentials or SDK log text is retained in diagnostics.
+Transport deadlines, certificate verification, response caps and scheduling
+are unchanged. These diagnostics support device investigation and do not
+establish a root cause for an absent forecast by themselves.

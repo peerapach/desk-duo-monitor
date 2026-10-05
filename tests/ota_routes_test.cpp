@@ -75,18 +75,26 @@ int runtime_display_patch(const std::string& json){return displayPreference.patc
 int runtime_patch(const std::string&){++patches;return 204;}
 void runtime_usage(const Usage&){++usage;}
 uint64_t now_ms(){return clockMs;}
+std::string network_diagnostics_json(){return R"({"stationOnline":true,"weatherConfigured":true,"attempt":{"outcome":"dns_failure","httpStatus":null}})";}
 std::string input_diagnostics_json(){return R"({"sequence":19,"lastPollTimeMs":20,"lastPressure":0,"pressureAccepted":false,"samples":[{"sequence":18,"timeMs":19,"rawX":123,"rawY":456,"pressure":200,"x":7,"y":8}]})";}
 }
 int main(int argc,char**){
     using namespace deskduo;
-    portal_init();assert(routes.size()==9);
-    assert(serverConfig.max_uri_handlers>=9);
+    portal_init();assert(routes.count({"/api/network",HTTP_GET}) && !routes.count({"/api/network",HTTP_POST}));assert(routes.size()==10);
+    assert(serverConfig.max_uri_handlers==10 && serverConfig.max_open_sockets==4 && serverConfig.lru_purge_enable);
     for(auto method:{HTTP_GET,HTTP_POST}){
       for(auto credential:{"","Bearer test-usage-token-123","Basic wrong"}){
         auto e=exchange();e.headers["Authorization"]=credential;auto r=request(e,"/api/display",method);
         assert(dispatch(r)==ESP_FAIL && e.status=="401 Unauthorized" && e.reads==0);
       }
     }
+    for(auto credential:{"","Bearer test-usage-token-123","Basic wrong"}) {
+        auto e=exchange();e.headers["Authorization"]=credential;auto r=request(e,"/api/network",HTTP_GET);
+        assert(dispatch(r)==ESP_FAIL && e.status=="401 Unauthorized" && e.reads==0);
+    }
+    {auto e=exchange();auto r=request(e,"/api/network",HTTP_GET);
+     assert(dispatch(r)==ESP_OK && e.status=="200 OK" && e.reads==0);
+     assert(e.response==network_diagnostics_json() && patches==0 && usage==0);}
     // Current settings remain administrator-only, with presence instead of secrets.
     for(auto credential:{"","Bearer test-usage-token-123","Basic wrong"}) {
         auto e=exchange();e.headers["Authorization"]=credential;auto r=request(e,"/api/config",HTTP_GET);
@@ -164,6 +172,7 @@ int main(int argc,char**){
     {auto e=exchange();auto r=request(e);assert(dispatch(r)==ESP_FAIL && e.status=="503 Service Unavailable" && !e.reads);}
     {auto e=exchange();auto r=request(e,"/api/config");assert(dispatch(r)==ESP_FAIL && e.status=="503 Service Unavailable" && patches==0 && !e.reads);}
     {auto e=exchange();auto r=request(e,"/api/display");assert(dispatch(r)==ESP_FAIL && e.status=="503 Service Unavailable" && !e.reads);}
+    {auto e=exchange();auto r=request(e,"/api/network",HTTP_GET);assert(dispatch(r)==ESP_OK && e.response==network_diagnostics_json() && !e.reads);}
     {auto e=exchange();auto r=request(e,"/api/firmware",HTTP_GET);assert(dispatch(r)==ESP_OK && e.response.find("\"busy\":true")!=std::string::npos && e.response.find("ota_0")!=std::string::npos);}
     {auto e=exchange();e.headers["Authorization"]="Bearer test-usage-token-123";e.headers["Content-Type"]="application/json";e.body=R"({"schemaVersion":1,"type":"usage","provider":"claude","updatedAt":"2026-10-04T03:00:00Z","primary":{"usedPercent":10,"windowMinutes":300,"resetsAt":"2026-10-04T08:00:00Z"}})";auto r=request(e,"/api/usage");dispatch(r);assert(e.reads>0 && e.status=="204 No Content" && usage==1);}
     runWorker();assert(!ota_busy() && completed==asyncCount && aborted==1 && selected==0 && bad.status=="408 Request Timeout");

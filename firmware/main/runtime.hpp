@@ -1,5 +1,6 @@
 #pragma once
 #include "core.hpp"
+#include "weather_diagnostics.hpp"
 #include <atomic>
 namespace deskduo {
 // Verify the actual serialized result restores every intended field, including
@@ -39,6 +40,7 @@ struct RequestConfig { Config config; uint64_t generation; };
 void runtime_init();
 RequestConfig runtime_config();
 Snapshot runtime_snapshot();
+WeatherView runtime_weather_view();
 int runtime_patch(const std::string& json);
 void runtime_usage(const Usage& usage);
 void runtime_weather(const ParseResult<Weather>& value, uint64_t generation);

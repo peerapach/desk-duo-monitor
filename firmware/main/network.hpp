@@ -45,6 +45,7 @@ struct FetchPolicy {
         return true;
     }
 };
+std::string network_diagnostics_json();
 std::string station_address();
 void network_init();
 void network_task(void*);

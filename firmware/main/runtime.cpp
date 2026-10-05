@@ -84,6 +84,10 @@ void runtime_init() {
 }
 RequestConfig runtime_config() { Lock lock(mutex); return {config, model.generation()}; }
 Snapshot runtime_snapshot() { return model.snapshot(now_ms()); }
+WeatherView runtime_weather_view() {
+    Lock lock(mutex);
+    return {model.generation(), !config.weather.url.empty(), model.snapshot(now_ms()).weather};
+}
 int runtime_patch(const std::string& json) {
     Lock oneWriter(writer);
     Config before = runtime_config().config;

@@ -50,7 +50,7 @@ for(const name of ['weather','stocks']){
  <small id="${name}HeadersStored">Headers ปัจจุบัน: กำลังโหลด...</small>
  <label>แทนที่ headers เป็น JSON (ว่าง = คงค่าเดิม, {} = ล้าง)<textarea id="${name}Headers" spellcheck="false" placeholder='{"Authorization":"Bearer ..."}'></textarea></label>
  <label>Refresh วินาที (30–86400)<input id="${name}Refresh" type="number" min="30" max="86400"></label>`;
- if(name==='weather')box.innerHTML+='<label>ชื่อสถานที่<input id="weatherLabel" maxlength="64"></label><label>Field mappings (JSON paths)<textarea id="weatherFields" spellcheck="false"></textarea></label>';
+ if(name==='weather')box.innerHTML+='<p id="weatherDataStatus" role="status">ข้อมูลอากาศ: กำลังโหลด...</p><button id="networkRefresh" type="button">อัปเดตสถานะ</button><small>อ่านสถานะล่าสุดของเครื่อง การอ่านไม่สั่งดึงข้อมูลใหม่</small><label>ชื่อสถานที่<input id="weatherLabel" maxlength="64"></label><label>Field mappings (JSON paths)<textarea id="weatherFields" spellcheck="false"></textarea></label>';
  $('sources').append(box);
 }
 let saved;
@@ -115,6 +115,7 @@ $('settings').addEventListener('submit',async e=>{
   saving=true;$('settingsButton').disabled=true;$('status').textContent='กำลังบันทึก...';
   const r=await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(patch)});
   if(!r.ok)throw Error(r.status===503?'Firmware maintenance busy หรือบันทึกไม่สำเร็จ ยังไม่เปลี่ยนค่า กรุณาลองอีกครั้ง':'ตรวจสอบค่า / สิทธิ์ (HTTP '+r.status+')');
+  invalidateNetworkStatus();
   // The POST has committed even if fetching its new snapshot fails.
   try{await load();}catch(_){$('status').textContent='บันทึกแล้ว แต่โหลดค่าปัจจุบันไม่สำเร็จ กรุณาโหลดหน้าใหม่ก่อนแก้ไขอีกครั้ง';return;}
   $('status').textContent='บันทึกแล้ว Wi-Fi จะเชื่อมต่อใหม่เมื่อเปลี่ยนค่า';
@@ -183,6 +184,45 @@ $('firmware').addEventListener('submit',async e=>{
   req.send(file);
  }catch(err){updateFailed(err.message);}
 });
+function weatherStatusText(info){
+ const w=info.weather,a=info.attempt;
+ if(typeof info.stationOnline!=='boolean' || typeof info.weatherConfigured!=='boolean' || !w || typeof w.hasData!=='boolean' || !a || typeof a.attempted!=='boolean')throw Error('invalid status');
+ let state;
+ if(!info.weatherConfigured)state='ยังไม่ตั้งค่าแหล่งข้อมูล';
+ else if(!info.stationOnline)state='เครือข่ายยังไม่เชื่อมต่อ';
+ else if(a.attempted && !a.currentGeneration)state='รอดึงข้อมูลสำหรับการตั้งค่าปัจจุบัน';
+ else if(!a.attempted || a.outcome==='running')state='รอดึงข้อมูล';
+ else if(a.outcome==='clock_wait')state='รอเวลาของเครื่องก่อนเชื่อมต่อ HTTPS';
+ else if(a.outcome==='accepted')state='รับข้อมูลแล้ว';
+ else if(a.outcome==='parse_failure')state='รูปแบบข้อมูลไม่ถูกต้อง';
+ else if(a.outcome==='http_status')state='แหล่งข้อมูลตอบ HTTP '+(Number.isInteger(a.httpStatus)?a.httpStatus:'ไม่ทราบ');
+ else if(a.outcome==='tls_failure')state='เชื่อมต่อ HTTPS ไม่สำเร็จ';
+ else state='เครือข่าย / การดึงข้อมูลไม่สำเร็จ';
+ const values=[];
+ if(w.hasData){
+  for(const [key,unit] of [['temperature','°C'],['humidity','%']])if(Number.isFinite(w[key]))values.push(w[key]+unit);
+  if(Number.isInteger(w.weatherCode))values.push('รหัสอากาศ '+w.weatherCode);
+  if(Number.isInteger(w.hourlyCount))values.push('รายชั่วโมง '+w.hourlyCount);
+  if(Number.isFinite(w.ageMs))values.push('อายุ '+Math.floor(w.ageMs/1000)+' วินาที');
+ }
+ return 'ข้อมูลอากาศ: '+(w.hasData?(w.stale?'ข้อมูลเก่า':'มีข้อมูล')+(values.length?' · '+values.join(' · '):''):'ยังไม่มีข้อมูล')+' · '+state;
+}
+let networkLoading=false,networkRevision=0;
+function invalidateNetworkStatus(){
+ networkRevision++;$('weatherDataStatus').textContent='ข้อมูลอากาศ: รออ่านสถานะสำหรับการตั้งค่าปัจจุบัน';
+}
+async function loadNetwork(){
+ if(networkLoading || updating)return;
+ networkLoading=true;const revision=networkRevision;$('networkRefresh').disabled=true;
+ const controller=new AbortController();const timeout=setTimeout(()=>controller.abort(),2000);
+ try{
+  const r=await fetch('/api/network',{cache:'no-store',signal:controller.signal});if(!r.ok)throw Error('status failed');
+  const text=weatherStatusText(await r.json());if(revision===networkRevision)$('weatherDataStatus').textContent=text;
+ }catch(_){if(revision===networkRevision)$('weatherDataStatus').textContent='ข้อมูลอากาศ: ไม่ทราบ (อ่านสถานะไม่สำเร็จ กรุณาลองอีกครั้ง)';}
+ finally{clearTimeout(timeout);networkLoading=false;$('networkRefresh').disabled=false;}
+}
+$('networkRefresh').addEventListener('click',loadNetwork);
+loadNetwork();
 firmwareStatus().catch(e=>$('firmwareInfo').textContent=e.message);
 </script></html>)HTML";
 }

@@ -50,6 +50,16 @@ def main() -> int:
                            str(ROOT / "firmware/main/core.cpp"), str(ROOT / "tests/firmware_core_test.cpp"),
                            str(cjson_object), "-o", str(test_binary)])
     run([str(test_binary), str(ROOT)])
+    diagnostics = output / "weather_diagnostics_test"
+    diagnostic_sources = [str(ROOT / "firmware/main/weather_diagnostics.cpp")]
+    run(compiler("c++") + ["-std=c++17", "-pthread", "-Wall", "-Wextra", "-Werror", "-I", str(sdk)] + diagnostic_sources +
+        [str(ROOT / "tests/weather_diagnostics_test.cpp"), str(cjson_object), "-o", str(diagnostics)])
+    run([str(diagnostics)])
+    transport = output / "weather_transport_diagnostics_test"
+    transport_sources = [str(ROOT / "firmware/main/weather_transport_diagnostics.cpp")]
+    run(compiler("c++") + ["-std=c++17", "-Wall", "-Wextra", "-Werror", "-I", str(ROOT / "tests/weather_sdk")] + transport_sources +
+        [str(ROOT / "firmware/main/weather_diagnostics.cpp"), "-I", str(sdk), str(ROOT / "tests/weather_transport_diagnostics_test.cpp"), str(cjson_object), "-o", str(transport)])
+    run([str(transport)])
     runtime = output / "runtime_display_test"
     run(compiler("c++") + ["-std=c++17", "-Wall", "-Wextra", "-Werror", "-I", str(ROOT / "tests/runtime_sdk"), "-I", str(sdk),
                            str(ROOT / "firmware/main/core.cpp"), str(ROOT / "firmware/main/runtime.cpp"),

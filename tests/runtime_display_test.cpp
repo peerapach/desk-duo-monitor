@@ -45,6 +45,15 @@ int main(){
  expectedDuringCommit=CodexUsageMode::Weekly;
  assert(runtime_display_patch(R"({"codexUsageMode":"both"})")==204 && savedMode==0 && runtime_display_mode()==CodexUsageMode::Both);
  assert(configBlob==original && blobWrites==0);
+ // Diagnostic current config/generation and accepted data must come from runtime,
+ // without NVS reads or acceptance of an obsolete worker result.
+ const auto beforeDiagnosticReads=reads;
+ auto view=runtime_weather_view();assert(view.generation==runtime_config().generation && !view.configured && !view.weather.data);
+ Weather value;value.temperature=29.6;value.humidity=76;value.hourlyCount=4;
+ runtime_weather({value,{}},view.generation);view=runtime_weather_view();assert(view.weather.data && view.weather.data->temperature==29.6);
+ runtime_weather({std::nullopt,"json"},view.generation);assert(runtime_weather_view().weather.stale);
+ runtime_weather({value,{}},view.generation+1);assert(runtime_weather_view().weather.stale);
+ assert(reads==beforeDiagnosticReads && configBlob==original && blobWrites==0);
  const auto active=runtime_config().config;assert(completeSerialization(active,original));
  assert(parseStoredConfig(original).value);
  std::cout<<"Production runtime: missing-key default without write, scalar reload, open/set/commit failure, commit-before-publish, no tick NVS reads, config/secrets/calibration preserved\n";
