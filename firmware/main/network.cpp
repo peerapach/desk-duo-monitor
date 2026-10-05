@@ -5,6 +5,7 @@
 #include "esp_event.h"
 #include "esp_http_client.h"
 #include "weather_transport_diagnostics.hpp"
+#include "weather_connect.hpp"
 #include "esp_netif.h"
 #include "esp_sntp.h"
 #include "esp_tls.h"
@@ -106,44 +107,9 @@ int connectTransport(esp_transport_handle_t t, const char* host, int port, int) 
     if (s.attempt) s.attempt->beforeTls = diagnosticHeap();
     s.tls = esp_tls_init();
     if (!s.tls) { failAttempt(s.attempt, WeatherOutcome::TransportAllocation, WeatherPhase::Tls, true); return -1; }
-    esp_tls_cfg_t cfg{};
-    cfg.non_block = true;
-    cfg.timeout_ms = 1; // async connect's select is bounded, socket stays nonblocking
-    cfg.is_plain_tcp = !s.secure;
-    cfg.common_name = host; // SNI AND hostname verification despite numeric connect
-    if (s.secure) cfg.crt_bundle_attach = esp_crt_bundle_attach;
-    while (s.policy.remaining(now_ms()) > 0) {
-        int result = esp_tls_conn_new_async(address.c_str(), address.size(), port, &cfg, s.tls);
-        if (result == 1) {
-            if (s.secure) return 0;
-            // Plain nonblocking esp_tls returns after connect(EINPROGRESS).
-            // Check socket completion before HTTP writes, without reconnecting.
-            int socket = -1;
-            if (esp_tls_get_conn_sockfd(s.tls, &socket) != ESP_OK) { transportFailure(s, WeatherOutcome::TcpFailure, WeatherPhase::Tcp); return -1; }
-            while (s.policy.remaining(now_ms()) > 0) {
-                fd_set writable; FD_ZERO(&writable); FD_SET(socket, &writable);
-                timeval interval{0, 1000};
-                int ready = select(socket + 1, nullptr, &writable, nullptr, &interval);
-                if (ready < 0) { transportFailure(s, WeatherOutcome::TcpFailure, WeatherPhase::Tcp); return -1; }
-                if (ready > 0) {
-                    int error = 0; socklen_t length = sizeof(error);
-                    const bool connected = getsockopt(socket, SOL_SOCKET, SO_ERROR, &error, &length) == 0 && error == 0;
-                    if (!connected) transportFailure(s, WeatherOutcome::TcpFailure, WeatherPhase::Tcp, error ? error : errno);
-                    return connected ? 0 : -1;
-                }
-                vTaskDelay(1);
-            }
-            transportFailure(s, WeatherOutcome::Deadline, WeatherPhase::Tcp, ETIMEDOUT);
-            return -1;
-        }
-        if (result < 0) { transportFailure(s, s.secure ? WeatherOutcome::TlsFailure : WeatherOutcome::TcpFailure,
-                                         s.secure ? WeatherPhase::Tls : WeatherPhase::Tcp); return -1; }
-        vTaskDelay(1);
-    }
-    errno = ETIMEDOUT;
-    transportFailure(s, WeatherOutcome::Deadline, s.secure ? WeatherPhase::Tls : WeatherPhase::Tcp);
-    return -1;
+    return connectResolvedTransport(s.policy, s.tls, s.secure, host, address, port, s.attempt);
 }
+
 bool retry(int n) {
     return n == ESP_TLS_ERR_SSL_WANT_READ || n == ESP_TLS_ERR_SSL_WANT_WRITE ||
            (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR));

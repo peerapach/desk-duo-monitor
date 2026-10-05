@@ -60,6 +60,13 @@ def main() -> int:
     run(compiler("c++") + ["-std=c++17", "-Wall", "-Wextra", "-Werror", "-I", str(ROOT / "tests/weather_sdk")] + transport_sources +
         [str(ROOT / "firmware/main/weather_diagnostics.cpp"), "-I", str(sdk), str(ROOT / "tests/weather_transport_diagnostics_test.cpp"), str(cjson_object), "-o", str(transport)])
     run([str(transport)])
+    connect = output / "weather_connect_test"
+    run(compiler("c++") + ["-std=c++17", "-Wall", "-Wextra", "-Werror", "-I", str(ROOT / "tests/weather_sdk"),
+                           "-I", str(sdk), str(ROOT / "firmware/main/core.cpp"), str(ROOT / "firmware/main/weather_connect.cpp"),
+                           str(ROOT / "firmware/main/weather_transport_diagnostics.cpp"),
+                           str(ROOT / "firmware/main/weather_diagnostics.cpp"),
+                           str(ROOT / "tests/weather_connect_test.cpp"), str(cjson_object), "-o", str(connect)])
+    run([str(connect)])
     runtime = output / "runtime_display_test"
     run(compiler("c++") + ["-std=c++17", "-Wall", "-Wextra", "-Werror", "-I", str(ROOT / "tests/runtime_sdk"), "-I", str(sdk),
                            str(ROOT / "firmware/main/core.cpp"), str(ROOT / "firmware/main/runtime.cpp"),
