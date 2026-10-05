@@ -22,18 +22,31 @@ inline bool completeSerialization(const Config& expected, const std::string& jso
 }
 // The caller serializes writers; readers never perform NVS I/O.
 class DisplayPreference {
-    std::atomic<CodexUsageMode> mode_{CodexUsageMode::Both};
+    // One atomic publication keeps the language and usage mode coherent.
+    std::atomic<uint8_t> settings_{0};
 public:
-    CodexUsageMode get() const { return mode_.load(); }
-    void initialize(CodexUsageMode mode) { mode_.store(mode); }
+    DisplaySettings settings() const {
+        const auto value = settings_.load();
+        return {static_cast<CodexUsageMode>(value & 1), static_cast<Language>((value >> 1) & 1)};
+    }
+    CodexUsageMode get() const { return settings().mode; }
+    Language language() const { return settings().language; }
+    void initialize(CodexUsageMode mode, Language language = Language::Thai) {
+        settings_.store(static_cast<uint8_t>(mode) | (static_cast<uint8_t>(language) << 1));
+    }
     template<typename Persist> int patch(const std::string& json, Persist persist) {
         auto parsed = parseDisplayPreference(json);
         if (!parsed.value) return 400;
-        if (!persist(*parsed.value)) return 503;
-        mode_.store(*parsed.value);
+        auto next = settings();
+        if (parsed.value->mode) next.mode = *parsed.value->mode;
+        if (parsed.value->language) next.language = *parsed.value->language;
+        if (!persist(next)) return 503;
+        initialize(next.mode, next.language);
         return 204;
     }
 };
+DisplaySettings runtime_display_settings();
+Language runtime_language();
 CodexUsageMode runtime_display_mode();
 int runtime_display_patch(const std::string& json);
 struct RequestConfig { Config config; uint64_t generation; };

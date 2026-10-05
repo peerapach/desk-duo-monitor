@@ -30,6 +30,8 @@ UI regression ใช้ runtime/GPIO จำลองและ `ui.cpp` จริ
 
 Package สร้าง `artifacts/desk-duo-cyd.bin`, `.sha256`, `.json`, `desk-duo-app.bin` และ notices ตรวจ offset จาก metadata ของ build, dual OTA partition, ขนาด, SHA256, image checksum/identity และเทียบ bytes ของทั้งสี่ส่วนจริง ไม่มีคำสั่งเข้าถึง serial ใน script นี้
 
+ทดสอบ portal กับ DOM จริงแบบ offline เพิ่มเติมได้เมื่อมี Playwright และ Chromium อยู่แล้ว (ไม่ติดตั้ง/ดาวน์โหลดจาก test): ตั้ง `NODE_PATH` ให้ชี้ runtime ที่มี `playwright` และถ้าต้องใช้ Chromium ที่มีอยู่คนละ revision ให้ตั้ง `PLAYWRIGHT_CHROMIUM_EXECUTABLE` เป็น absolute path แล้วรัน `rtk proxy node --test tests/portal_dom.cjs` Test ปิด network requests ทั้งหมดและใช้ fixture ภายในเครื่อง ภาพทั้งสองภาษาอยู่ที่ `.platformio/native-ui-regression/portal-language-{th,en}.png`
+
 ## ตั้งค่าหลังติดตั้งบนบอร์ดในอนาคต
 
 จอแรกแสดง SSID `DeskDuo-xxxxxx`, รหัส WPA2 แบบสุ่ม 12 ตัว, URL `http://192.168.4.1`, และ Usage bearer token แบบสุ่ม 32 hex เชื่อม AP แล้วเปิด URL ใช้ HTTP Basic username `admin` และรหัสเดียวกับ AP การเชื่อมต่อ portal เป็น HTTP ภายในเครือข่าย local; ใช้ AP ที่มีรหัสหรือ LAN ที่เชื่อถือได้
@@ -38,9 +40,13 @@ Package สร้าง `artifacts/desk-duo-cyd.bin`, `.sha256`, `.json`, `desk-
 
 ตั้ง Wi-Fi, URL อากาศ/หุ้น, headers แบบ JSON, field mappings, refresh 30–86400 วินาที, auto rotation 0/ปิด หรือ 5–300 วินาที และ token จาก portal ค่า SSID/password/token/URL/headers ที่เว้นว่างจะคงค่าเดิม การล้าง Wi-Fi หรือ URL ต้องเลือกช่องล้าง; headers `{}` คือล้างทั้งหมด GET settings สำหรับ Basic admin แสดง SSID ที่บันทึก (ไม่ใช่หลักฐานว่า radio ต่อเครือข่ายนี้อยู่), URL ที่ตัด query/fragment และสถานะตั้งค่าแล้ว/ยังไม่ตั้งค่าของรหัส Wi-Fi, usage token และ headers โดยไม่เปิดเผยค่าลับ ช่องแทนที่ URL/รหัส/token/headers ยังคงว่าง และส่งเฉพาะค่าที่แก้ไขจาก snapshot ที่โหลดสำเร็จ; ไม่แก้ไขจะไม่ POST หากโหลดไม่สำเร็จจะแสดงไม่ทราบและปิดบันทึก หากบันทึกสำเร็จแต่โหลดใหม่ล้มเหลวจะแจ้งว่าบันทึกแล้วและต้องโหลดหน้าใหม่ก่อนแก้ต่อ metadata นี้อยู่เฉพาะ public response ไม่เปลี่ยน Config หรือ bytes ใน NVS ส่วน Codex display form ยังโหลด/บันทึกแยกกัน
 
-เลือกการแสดง usage ของ Codex ในฟอร์มแยก: `5h + Weekly` (ค่าเริ่มต้น) หรือ `Weekly อย่างเดียว` บันทึกแล้วจอเปลี่ยนทันทีโดยไม่ reboot ฟอร์มนี้ไม่เปลี่ยน Wi-Fi/แหล่งข้อมูล/ค่าลับ และยังกดบันทึกไม่ได้จนโหลดค่าปัจจุบันสำเร็จ
+เลือกภาษาไทย / English สำหรับทั้งจอและเว็บในฟอร์มการแสดงผล ค่าเริ่มต้นคือภาษาไทยเมื่อยังไม่เคยบันทึกภาษา เปลี่ยนตัวเลือกแล้วเว็บแสดงภาษานั้นให้ตรวจได้ก่อนบันทึก พร้อมแสดงภาษาที่บันทึกอยู่ บันทึกสำเร็จแล้วจอเปลี่ยนหน้าเดิมทันทีและจำค่าหลัง reboot ชื่อสถานที่/SSID/ชื่อหุ้นและค่าที่ผู้ใช้กรอกไม่ถูกแปล
 
-`GET /api/display` และ `POST /api/display` ใช้ Basic admin เท่านั้น POST รับ JSON ไม่เกิน 512 bytes เช่น `{"codexUsageMode":"weekly"}` โดยต้องมี field นี้เพียง field เดียว ค่า `both` หรือ `weekly` เท่านั้น Settings admission เดิมปิดการบันทึกระหว่าง OTA (HTTP503) ค่านี้เก็บแยกใน NVS namespace `deskduo`, scalar key `codex_layout`; ถ้า key ไม่มีใช้ `both` โดยไม่เขียนค่าเริ่มต้น รูปแบบ config blob เดิมไม่เปลี่ยนเพื่อให้ firmware เก่าอ่านต่อได้ Commit ต้องสำเร็จก่อนเปลี่ยนค่าที่จอใช้งาน
+เลือกการแสดง usage ของ Codex ในฟอร์มเดียวกัน: `5h + Weekly` (ค่าเริ่มต้น) หรือ `Weekly อย่างเดียว` บันทึกแล้วจอเปลี่ยนทันทีโดยไม่ reboot ฟอร์มนี้ไม่เปลี่ยน Wi-Fi/แหล่งข้อมูล/ค่าลับ และยังกดบันทึกไม่ได้จนโหลดค่าปัจจุบันสำเร็จ
+
+`GET /api/display` และ `POST /api/display` ใช้ Basic admin เท่านั้น GET คืน `{"codexUsageMode":"both"|"weekly","language":"th"|"en"}` POST รับ JSON ไม่เกิน 512 bytes เช่น `{"codexUsageMode":"weekly"}`, `{"language":"en"}` หรือทั้งสอง field ในคำขอเดียว ค่าอื่น / type อื่น / key ที่ไม่รู้จัก / คำขอว่างถูกปฏิเสธโดยไม่เปลี่ยนค่า ส่งเฉพาะ field เดียวจะคงอีก field ไว้ เว็บอ่านค่าจากเครื่องอีกครั้งหลังบันทึกและไม่อ้างว่าตัวเลือกถูกบันทึกเมื่อ POST ล้มเหลว Settings admission เดิมปิดการบันทึกระหว่าง OTA (HTTP503); Origin ที่ส่งมาต้องตรงกับ HTTP Host ของเครื่อง
+
+ค่าการแสดงผลเก็บแยกใน NVS namespace `deskduo`, scalar key `ui_pref` โดย bit0 คือ Codex mode และ bit1 คือภาษา ถ้า key ไม่มีหรือค่าไม่ถูกต้อง จะอ่าน `codex_layout` เดิมและใช้ภาษาไทยโดยไม่เขียนค่าเริ่มต้น ค่า `codex_layout` เดิมและ config blob ไม่ถูกเปลี่ยน Single scalar ป้องกันการบันทึกสอง field ได้เพียงครึ่งเดียว: ESP-IDF ที่ pin ไว้เขียน NVS ตอน set ส่วน commit ยังเป็น no-op หลัง set/commit สำเร็จจึงเผยแพร่ preference ทั้งคู่พร้อมกัน ถ้า commit คืน failure จะคง active preference เดิม แม้ set อาจบันทึก scalar ใหม่ทั้งคู่ไว้แล้ว รูปแบบ config blob เดิมไม่เปลี่ยนเพื่อให้ firmware เก่าอ่านต่อได้
 
 โหมดทั้งสองแสดง duration/reset ตามข้อมูลจริง และเรียกช่วง Codex 10080 นาทีว่า Weekly โหมด weekly เลือกช่วง 10080 นาทีจาก primary ก่อน secondary ถ้าไม่พบจึงยอมรับ secondary ที่ไม่มี duration หรือ primary ที่ไม่มี duration และเป็นช่วงเดียวตามการเลือกของผู้ใช้ ช่วงที่มี duration อื่นไม่ถูกเปลี่ยนชื่อเป็น weekly; ถ้าไม่มีช่วงที่เลือกได้แสดง unknown/-- พร้อมซ่อนค่า/reset/bar รองทั้งหมด ข้อมูล telemetry ไม่เปลี่ยน Claude แสดง duration ตามเดิม Weather ไม่มี mini sprites ส่วน Stocks คงภาพคู่หูขนาดเล็กไว้
 

@@ -63,7 +63,16 @@ void runtime_init() {
     result = nvs_get_u8(handle, "codex_layout", &savedMode);
     ESP_ERROR_CHECK(result == ESP_ERR_NVS_NOT_FOUND ? ESP_OK : result);
     ESP_ERROR_CHECK(savedMode <= 1 ? ESP_OK : ESP_ERR_INVALID_STATE);
-    displayPreference.initialize(static_cast<CodexUsageMode>(savedMode));
+    uint8_t savedPreference = 0;
+    result = nvs_get_u8(handle, "ui_pref", &savedPreference);
+    ESP_ERROR_CHECK(result == ESP_ERR_NVS_NOT_FOUND ? ESP_OK : result);
+    // The existing layout is a read-only migration fallback. A single NVS
+    // scalar stores both preferences: set_u8 is durable in the pinned IDF,
+    // while commit is a no-op, so separate writes cannot be atomic.
+    if (result == ESP_OK && savedPreference <= 3)
+        displayPreference.initialize(static_cast<CodexUsageMode>(savedPreference & 1),
+            static_cast<Language>((savedPreference >> 1) & 1));
+    else displayPreference.initialize(static_cast<CodexUsageMode>(savedMode), Language::Thai);
     nvs_close(handle);
     bool changed = false;
     // Enable the documented internal entropy source before Wi-Fi starts.
@@ -98,14 +107,16 @@ int runtime_patch(const std::string& json) {
     { Lock lock(mutex); config = std::move(*parsed.value); model.applyConfig(config); }
     return 204;
 }
+DisplaySettings runtime_display_settings() { return displayPreference.settings(); }
+Language runtime_language() { return displayPreference.language(); }
 CodexUsageMode runtime_display_mode() { return displayPreference.get(); }
 int runtime_display_patch(const std::string& json) {
     Lock oneWriter(writer);
-    return displayPreference.patch(json, [](CodexUsageMode mode) {
+    return displayPreference.patch(json, [](const DisplaySettings& next) {
         nvs_handle_t handle;
         if (nvs_open("deskduo", NVS_READWRITE, &handle) != ESP_OK) return false;
-        const bool ok = nvs_set_u8(handle, "codex_layout", static_cast<uint8_t>(mode)) == ESP_OK &&
-            nvs_commit(handle) == ESP_OK;
+        const uint8_t encoded = static_cast<uint8_t>(next.mode) | (static_cast<uint8_t>(next.language) << 1);
+        const bool ok = nvs_set_u8(handle, "ui_pref", encoded) == ESP_OK && nvs_commit(handle) == ESP_OK;
         nvs_close(handle);
         return ok;
     });

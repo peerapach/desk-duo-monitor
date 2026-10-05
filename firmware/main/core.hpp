@@ -31,7 +31,10 @@ struct Usage {
 };
 
 enum class CodexUsageMode : uint8_t { Both = 0, Weekly = 1 };
-ParseResult<CodexUsageMode> parseDisplayPreference(const std::string& json);
+enum class Language : uint8_t { Thai = 0, English = 1 };
+struct DisplaySettings { CodexUsageMode mode = CodexUsageMode::Both; Language language = Language::Thai; };
+struct DisplayPatch { std::optional<CodexUsageMode> mode; std::optional<Language> language; };
+ParseResult<DisplayPatch> parseDisplayPreference(const std::string& json);
 
 // Return source telemetry unchanged; manual weekly mode can classify only
 // an undated secondary, or an undated primary when it is the sole window.

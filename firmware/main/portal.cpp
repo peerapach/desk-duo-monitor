@@ -22,6 +22,7 @@ esp_err_t respond(httpd_req_t* request, int status, const std::string& body = ""
         case 200: text = "200 OK"; break;
         case 204: text = "204 No Content"; break;
         case 400: text = "400 Bad Request"; break;
+        case 403: text = "403 Forbidden"; break;
         case 401: text = "401 Unauthorized"; break;
         case 408: text = "408 Request Timeout"; break;
         case 413: text = "413 Content Too Large"; break;
@@ -50,13 +51,22 @@ esp_err_t route(httpd_req_t* request) {
             return respond(request, 200, portal_html);
         }
         httpd_resp_set_type(request, "application/json");
-        if (path == "/api/display") return respond(request, 200,
-            runtime_display_mode() == CodexUsageMode::Weekly ? "{\"codexUsageMode\":\"weekly\"}" : "{\"codexUsageMode\":\"both\"}");
+        if (path == "/api/display") {
+            const auto settings = runtime_display_settings();
+            return respond(request, 200, std::string("{\"codexUsageMode\":\"") +
+                (settings.mode == CodexUsageMode::Weekly ? "weekly" : "both") + "\",\"language\":\"" +
+                (settings.language == Language::English ? "en" : "th") + "\"}");
+        }
         if (path == "/api/network") return respond(request, 200, network_diagnostics_json());
         if (path == "/api/touch") return respond(request, 200, input_diagnostics_json());
         return respond(request, 200, path == "/api/firmware" ? ota_status_json() : redactedConfig(config));
     }
     if (path == "/api/firmware") return ota_upload(request);
+    if (path == "/api/display") {
+        const auto origin = header(request, "Origin", 256);
+        if ((httpd_req_get_hdr_value_len(request, "Origin") && origin.empty()) ||
+            !upload_origin_allowed(origin, header(request, "Host", 256))) return respond(request, 403);
+    }
     // Reserve settings maintenance before body receive; usage remains available.
     MaintenanceLease lease(usage ? Maintenance::Idle : Maintenance::Settings);
     if (!usage && !lease) return respond(request, 503, "Firmware maintenance busy; retry shortly");

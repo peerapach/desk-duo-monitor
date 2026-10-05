@@ -21,6 +21,8 @@ struct View {
     Condition kind=Condition::Unknown;
 } view;
 lv_font_t thai12, thai14;
+Language language=Language::Thai;
+const char* tr(const char* thai,const char* english) { return language==Language::English?english:thai; }
 
 Condition classify(std::optional<int> code) {
     if(!code)return Condition::Unknown;
@@ -40,15 +42,15 @@ Condition classify(std::optional<int> code) {
 }
 const char* conditionText(Condition kind) {
     switch(kind) {
-        case Condition::Clear:return "ท้องฟ้าแจ่มใส";
-        case Condition::Partial:return "มีเมฆบางส่วน";
-        case Condition::Cloud:return "เมฆมาก";
-        case Condition::Fog:return "หมอก";
-        case Condition::Drizzle:return "ฝนปรอย";
-        case Condition::Rain:return "ฝนตก";
-        case Condition::Snow:return "หิมะ";
-        case Condition::Thunder:return "พายุฝน";
-        default:return "สภาพอากาศ --";
+        case Condition::Clear:return tr("ท้องฟ้าแจ่มใส","Clear");
+        case Condition::Partial:return tr("มีเมฆบางส่วน","Partly cloudy");
+        case Condition::Cloud:return tr("เมฆมาก","Cloudy");
+        case Condition::Fog:return tr("หมอก","Fog");
+        case Condition::Drizzle:return tr("ฝนปรอย","Drizzle");
+        case Condition::Rain:return tr("ฝนตก","Rain");
+        case Condition::Snow:return tr("หิมะ","Snow");
+        case Condition::Thunder:return tr("พายุฝน","Thunderstorm");
+        default:return tr("สภาพอากาศ --","Condition --");
     }
 }
 void setText(lv_obj_t* obj,const std::string& value) {
@@ -74,7 +76,7 @@ int textWidth(const std::string& value,const lv_font_t* font) {
 // enormous decimal string or display a clipped scientific-notation fragment.
 std::string temperatureText(std::optional<double> value,bool degree=false) {
     if(!value)return "--";
-    if(!std::isfinite(*value) || std::abs(*value)>=1000)return "เกินช่วง";
+    if(!std::isfinite(*value) || std::abs(*value)>=1000)return tr("เกินช่วง","Out of range");
     char result[16];std::snprintf(result,sizeof(result),"%.1f",*value==0?0:*value);
     return std::string(result)+(degree?"°":"");
 }
@@ -189,23 +191,24 @@ lv_obj_t* drawing(lv_obj_t* parent,int x,int y,int width,int height,lv_event_cb_
 }
 }
 void weather_view_reset() { view={}; }
-void weather_view_create(lv_obj_t* parent) {
+void weather_view_create(lv_obj_t* parent, Language selected) {
+    language=selected;
     thai12=lv_font_montserrat_12;thai12.fallback=&ct_font_thai_12;
     thai12.line_height=ct_font_thai_12.line_height;thai12.base_line=ct_font_thai_12.base_line;
     thai14=lv_font_montserrat_14;thai14.fallback=&ct_font_thai_14;
     thai14.line_height=ct_font_thai_14.line_height;thai14.base_line=ct_font_thai_14.base_line;
-    view.location=label(parent,14,4,122,"อากาศ",&thai14);
+    view.location=label(parent,14,4,122,tr("อากาศ","Weather"),&thai14);
     lv_label_set_long_mode(view.location,LV_LABEL_LONG_SCROLL_CIRCULAR);
-    view.status=label(parent,142,9,84,"ยังไม่มีข้อมูล",&thai12,muted);
+    view.status=label(parent,142,9,84,tr("ยังไม่มีข้อมูล","No data"),&thai12,muted);
     lv_obj_set_style_text_align(view.status,LV_TEXT_ALIGN_RIGHT,0);
-    view.condition=label(parent,14,28,212,"สภาพอากาศ --",&thai12,muted);
+    view.condition=label(parent,14,28,212,tr("สภาพอากาศ --","Condition --"),&thai12,muted);
     view.temperature=label(parent,12,48,126,"--",&lv_font_montserrat_48);
     label(parent,143,55,24,"°C",&lv_font_montserrat_14);
     view.icon=drawing(parent,162,44,65,65,drawIcon);
     drawing(parent,14,112,12,17,drawDroplet);
-    label(parent,33,112,60,"ความชื้น",&thai12,muted);
+    label(parent,33,112,60,tr("ความชื้น","Humidity"),&thai12,muted);
     view.humidity=label(parent,93,113,48,"--",&lv_font_montserrat_14);
-    auto* legend=label(parent,159,117,67,"โอกาสฝน",&thai12,muted);
+    auto* legend=label(parent,159,117,67,tr("โอกาสฝน","Rain %"),&thai12,muted);
     lv_obj_set_style_text_align(legend,LV_TEXT_ALIGN_RIGHT,0);
     view.plot=drawing(parent,12,136,216,90,drawPlot);
     for(int k=0;k<4;++k) {
@@ -214,28 +217,29 @@ void weather_view_create(lv_obj_t* parent) {
         view.rain[k]=label(parent,12+54*k,210,54,"--",&lv_font_montserrat_12,water,true);
     }
 }
-void weather_view_update(const Snapshot& snapshot,uint64_t nowMs) {
+void weather_view_update(const Snapshot& snapshot,uint64_t nowMs, Language selected) {
+    language=selected;
     if(!view.temperature)return;
-    setText(view.location,snapshot.weatherLabel.empty()?"อากาศ":snapshot.weatherLabel);
+    setText(view.location,snapshot.weatherLabel.empty()?tr("อากาศ","Weather"):snapshot.weatherLabel);
     const auto& source=snapshot.weather;
     const Weather* weather=!source.unknown && source.data?&*source.data:nullptr;
-    std::string status="ยังไม่มีข้อมูล";
+    std::string status=tr("ยังไม่มีข้อมูล","No data");
     if(weather) {
         const uint64_t minutes=(nowMs>=source.receivedAtMs?nowMs-source.receivedAtMs:0)/60000;
         const auto count=minutes<60?minutes:minutes/60;
-        const auto duration=(count>999?std::string(">999"):std::to_string(count))+(minutes<60?" น.":" ชม.");
-        status=std::string(source.stale?"ข้อมูลเก่า ":"รับแล้ว ")+duration;
+        const auto duration=(count>999?std::string(">999"):std::to_string(count))+(minutes<60?tr(" น.","m"):tr(" ชม.","h"));
+        status=std::string(source.stale?tr("ข้อมูลเก่า ","Stale "):tr("รับแล้ว ","Received "))+duration;
         // Preserve a readable stale marker and receipt age when native Thai
         // metrics make the longer wording wider than its reserved column.
         if(textWidth(shapeText(status),&thai12)>84)
-            status=std::string(source.stale?"เก่า ":"รับ ")+duration;
+            status=std::string(source.stale?tr("เก่า ","Stale "):tr("รับ ","Rx "))+duration;
     }
     setText(view.status,status);
     const auto value=weather?weather->temperature:std::nullopt;
     const auto temperature=temperatureText(value);
     const auto shaped=shapeText(temperature);
     const lv_font_t* font=&lv_font_montserrat_48;
-    if(temperature=="เกินช่วง")font=&thai14;
+    if(temperature==tr("เกินช่วง","Out of range"))font=&thai14;
     else if(textWidth(shaped,font)>126)font=&lv_font_montserrat_32;
     lv_obj_set_style_text_font(view.temperature,font,0);setText(view.temperature,temperature);
     view.kind=classify(weather?weather->weatherCode:std::nullopt);

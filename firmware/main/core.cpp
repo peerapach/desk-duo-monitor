@@ -939,17 +939,26 @@ void accept(SourceSnapshot<T>& target, const T& data, uint64_t nowMs) {
 
 }  // namespace
 
-ParseResult<CodexUsageMode> parseDisplayPreference(const std::string& json) {
+ParseResult<DisplayPatch> parseDisplayPreference(const std::string& json) {
     auto parsed = parseJson(json, 512);
     if (!parsed.root) return {std::nullopt, parsed.error};
     const auto* root = parsed.root.get();
-    if (!cJSON_IsObject(root) || !root->child || root->child->next ||
-        std::strcmp(root->child->string, "codexUsageMode") != 0 || !cJSON_IsString(root->child))
-        return {std::nullopt, "display"};
-    const std::string mode = root->child->valuestring;
-    if (mode == "both") return {CodexUsageMode::Both, {}};
-    if (mode == "weekly") return {CodexUsageMode::Weekly, {}};
-    return {std::nullopt, "display"};
+    if (!cJSON_IsObject(root) || !root->child) return {std::nullopt, "display"};
+    DisplayPatch patch;
+    for (const auto* item = root->child; item; item = item->next) {
+        if (!item->string || !cJSON_IsString(item)) return {std::nullopt, "display"};
+        const std::string key = item->string, value = item->valuestring;
+        if (key == "codexUsageMode" && !patch.mode) {
+            if (value == "both") patch.mode = CodexUsageMode::Both;
+            else if (value == "weekly") patch.mode = CodexUsageMode::Weekly;
+            else return {std::nullopt, "display"};
+        } else if (key == "language" && !patch.language) {
+            if (value == "th") patch.language = Language::Thai;
+            else if (value == "en") patch.language = Language::English;
+            else return {std::nullopt, "display"};
+        } else return {std::nullopt, "display"};
+    }
+    return {patch, {}};
 }
 
 ParseResult<Usage> parseUsage(const std::string& json) {

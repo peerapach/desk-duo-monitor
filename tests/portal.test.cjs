@@ -8,13 +8,16 @@ const production = asset.split('<script>')[1].split('</script>')[0];
 
 async function portal(options={}) {
   if(typeof options==='boolean')options={displayLoad:options};
-  const {displayLoad=true,configLoad=true,reloadLoad=true}=options;let configLoads=0;
+  const scenario=options;
+  const {displayLoad=true,configLoad=true,reloadLoad=true}=options;let configLoads=0;let displayLoads=0;let display={codexUsageMode:"weekly",language:options.language||"th"};
   const uploads=[];let firmware={version:"2.0.0",capacity:1966080,busy:false,runningPartition:"ota_0"};
   const timers=new Map();let nextTimer=0;
-  const elements = new Map();
+  const elements = new Map();const translationNodes=[];
+  const documentState={documentElement:{lang:"th"},title:""};
   const markup=[];
   const register = html => {
     markup.push(html);
+    for(const match of html.matchAll(/data-i18n="([^"]+)"/g))translationNodes.push({dataset:{i18n:match[1]},textContent:''});
     for(const match of html.matchAll(/id="([^"]+)"/g))elements.set(match[1], {
       value:'',checked:false,textContent:'',disabled:false,
       append(element){register(element.innerHTML);},
@@ -30,10 +33,10 @@ async function portal(options={}) {
   const context = vm.createContext({
     setTimeout(fn){const id=++nextTimer;timers.set(id,fn);return id;},clearTimeout(id){timers.delete(id);},AbortController,
     XMLHttpRequest:class {constructor(){this.upload={};this.headers={};uploads.push(this);}open(method,url){this.method=method;this.url=url;}setRequestHeader(k,v){this.headers[k]=v;}send(file){this.file=file;}},
-    document:{getElementById:get,createElement(){return {innerHTML:''};}},
+    document:{...documentState,getElementById:get,querySelectorAll(){return translationNodes;},createElement(){return {innerHTML:''};}},
     fetch:async (url, options) => {
       if(url==='/api/network'){networkRequests.push(options);if(options.method)throw Error('status must be read only');if(networkReply)return await networkReply();if(networkLoad===false)throw Error('network private error');return {ok:networkStatus!==503,status:networkStatus||200,json:async()=>structuredClone(network)};}
-      if(url==='/api/display'){if(!options.method){if(!displayLoad)throw Error('offline');return {ok:true,json:async()=>({codexUsageMode:'weekly'})};}displayRequests.push(JSON.parse(options.body));return {ok:true,status:204};}
+      if(url==='/api/display'){if(!options.method){if(!displayLoad || (++displayLoads>1 && scenario.displayReload===false))throw Error('offline');return {ok:true,json:async()=>structuredClone(display)};}const patch=JSON.parse(options.body);displayRequests.push(patch);if(scenario.displaySave!==false)Object.assign(display,patch);return {ok:scenario.displaySave!==false,status:scenario.displaySave===false?503:204};}
       if(url==='/api/firmware')return {ok:true,status:200,json:async()=>structuredClone(firmware)};
       if(url!=='/api/config')throw Error('unexpected URL '+url);
       if(options.method){
@@ -62,7 +65,7 @@ async function portal(options={}) {
   vm.runInContext(production,context);
   await new Promise(resolve=>setImmediate(resolve));
   const submit = async () => {await get('settings').submit({preventDefault(){}}); return requests.at(-1);};
-  return {get,submit,requests,markup,displayRequests,networkRequests,setNetwork(value){network=value;},networkRefresh:()=>get('networkRefresh').click(),displaySubmit:()=>get("display").submit({preventDefault(){}}),uploads,timers,setFirmware(value){firmware=value;},firmwareSubmit:()=>get("firmware").submit({preventDefault(){}})};
+  return {get,submit,requests,markup,translationNodes,document:context.document,displayRequests,networkRequests,setNetwork(value){network=value;},networkRefresh:()=>get('networkRefresh').click(),displaySubmit:()=>get("display").submit({preventDefault(){}}),uploads,timers,setFirmware(value){firmware=value;},firmwareSubmit:()=>get("firmware").submit({preventDefault(){}})};
 }
 
 test('unchanged settings never POST and changed source fields omit hidden values', async()=>{
@@ -168,12 +171,12 @@ test('malformed edited headers do not send a partial settings update',async()=>{
 
 
 test('firmware selection is manual and oversize/merged-name inputs are rejected',async()=>{
- const p=await portal();assert.equal(p.uploads.length,0);
+ const p=await portal({language:'en'});assert.equal(p.uploads.length,0);
  p.get('firmwareFile').files=[{name:'desk-duo-cyd.bin',size:1900000}];await p.firmwareSubmit();assert.equal(p.uploads.length,0);
  p.get('firmwareFile').files=[{name:'desk-duo-app.bin',size:2000000}];await p.firmwareSubmit();assert.equal(p.uploads.length,0);
 });
 test('binary upload sets explicit headers; network 100 percent still waits for validation',async()=>{
- const p=await portal();const file={name:'desk-duo-app.bin',size:1500000};p.get('firmwareFile').files=[file];await p.firmwareSubmit();
+ const p=await portal({language:'en'});const file={name:'desk-duo-app.bin',size:1500000};p.get('firmwareFile').files=[file];await p.firmwareSubmit();
  const req=p.uploads[0];assert.equal(req.method,'POST');assert.equal(req.url,'/api/firmware');assert.equal(req.file,file);
  assert.deepEqual(req.headers,{'Content-Type':'application/octet-stream','X-DeskDuo-Update':'1'});
  req.upload.onprogress({lengthComputable:true,loaded:1500000,total:1500000});
@@ -181,17 +184,17 @@ test('binary upload sets explicit headers; network 100 percent still waits for v
  req.status=400;await req.onload();assert.match(p.get('firmwareStatus').textContent,/reject|retry/i);assert.equal(p.get('firmwareButton').disabled,false);
 });
 test('firmware network interruption enables retry and does not claim success',async()=>{
- const p=await portal();p.get('firmwareFile').files=[{name:'desk-duo-app.bin',size:1000}];await p.firmwareSubmit();
+ const p=await portal({language:'en'});p.get('firmwareFile').files=[{name:'desk-duo-app.bin',size:1000}];await p.firmwareSubmit();
  p.uploads[0].onerror();assert.match(p.get('firmwareStatus').textContent,/interrupt|retry/i);assert.equal(p.get('firmwareButton').disabled,false);
 });
 test('server busy prevents a second upload and explains settings busy response',async()=>{
- const p=await portal();p.setFirmware({version:'2.0.0',capacity:1966080,busy:true,runningPartition:'ota_0'});
+ const p=await portal({language:'en'});p.setFirmware({version:'2.0.0',capacity:1966080,busy:true,runningPartition:'ota_0'});
  p.get('firmwareFile').files=[{name:'desk-duo-app.bin',size:1000}];await p.firmwareSubmit();assert.equal(p.uploads.length,0);assert.match(p.get('firmwareStatus').textContent,/busy/i);
 });
 
 
 test('reconnect confirms a changed running slot, including same-version updates',async()=>{
- const p=await portal();p.get('firmwareFile').files=[{name:'desk-duo-app.bin',size:1000}];await p.firmwareSubmit();
+ const p=await portal({language:'en'});p.get('firmwareFile').files=[{name:'desk-duo-app.bin',size:1000}];await p.firmwareSubmit();
  const req=p.uploads[0];req.status=200;const done=req.onload();
  assert.match(p.get('firmwareStatus').textContent,/Restarting/);
  p.setFirmware({version:'2.0.0',capacity:1966080,busy:false,runningPartition:'ota_1'});
@@ -199,7 +202,7 @@ test('reconnect confirms a changed running slot, including same-version updates'
  assert.match(p.get('firmwareStatus').textContent,/Update complete/);assert.equal(p.get('firmwareButton').disabled,false);
 });
 test('unchanged slot never reports successful installation and reconnect retries are bounded',async()=>{
- const p=await portal();p.get('firmwareFile').files=[{name:'desk-duo-app.bin',size:1000}];await p.firmwareSubmit();
+ const p=await portal({language:'en'});p.get('firmwareFile').files=[{name:'desk-duo-app.bin',size:1000}];await p.firmwareSubmit();
  const req=p.uploads[0];req.status=200;const done=req.onload();
  for(let i=0;i<30;i++){
   assert.equal(p.timers.size,1);const [id,fn]=p.timers.entries().next().value;p.timers.delete(id);fn();await new Promise(resolve=>setImmediate(resolve));
@@ -255,4 +258,43 @@ test('committed settings invalidate old acceptance including an in-flight status
  delayed.get('weatherLabel').value='New source';await delayed.submit();finish({ok:true,json:async()=>accepted});
  await new Promise(resolve=>setImmediate(resolve));
  assert.doesNotMatch(delayed.get('weatherDataStatus').textContent,/รับข้อมูลแล้ว/);assert.equal(delayed.get('networkRefresh').disabled,false);
+});
+
+// Fails if the saved display language never reaches the actual rendered form.
+test('saved language governs portal and selection previews without claiming a save',async()=>{
+ const p=await portal({language:'en'});
+ assert.ok(p.get('language'),'language selector must exist');
+ assert.equal(p.get('language').value,'en');
+ assert.equal(p.document.documentElement.lang,'en');assert.equal(p.document.title,'Desk Duo setup');
+ assert.ok(p.translationNodes.some(n=>n.textContent==='Save display settings'));
+ assert.match(p.get('weatherDataStatus').textContent,/Weather data:.*No data/);
+ p.get('weatherLabel').value='ต้นฉบับ';p.get('language').value='th';p.get('language').change();
+ assert.equal(p.document.documentElement.lang,'th');assert.match(p.get('languageStored').textContent,/อังกฤษ.*ยังไม่ได้บันทึก/);
+ assert.match(p.get('weatherDataStatus').textContent,/ข้อมูลอากาศ:/);
+ assert.equal(p.get('weatherLabel').value,'ต้นฉบับ');assert.equal(p.displayRequests.length,0);
+ await p.displaySubmit();assert.deepEqual(p.displayRequests,[{language:'th'}]);
+ assert.equal(p.get('codexUsageMode').value,'weekly');assert.match(p.get('languageStored').textContent,/ไทย/);
+ assert.doesNotMatch(p.get('languageStored').textContent,/ยังไม่ได้บันทึก/);
+ p.get('codexUsageMode').value='both';await p.displaySubmit();
+ assert.deepEqual(p.displayRequests.at(-1),{codexUsageMode:'both'});
+ assert.equal(p.get('language').value,'th');
+});
+
+test('failed display save and failed readback never claim selected language saved',async()=>{
+ const p=await portal({displaySave:false});p.get('language').value='en';p.get('language').change();
+ await p.displaySubmit();assert.match(p.get('displayStatus').textContent,/Could not save/);
+ assert.match(p.get('languageStored').textContent,/Thai.*Not saved/);assert.equal(p.get('codexUsageMode').value,'weekly');
+ const q=await portal({displayReload:false});q.get('language').value='en';q.get('language').change();q.get('codexUsageMode').value='both';
+ await q.displaySubmit();assert.deepEqual(q.displayRequests,[{codexUsageMode:'both',language:'en'}]);
+ assert.match(q.get('displayStatus').textContent,/Saved.*readback failed/);assert.equal(q.get('displayButton').disabled,true);
+ assert.match(q.get('languageStored').textContent,/Thai.*Not saved/);
+});
+
+test('firmware picker copy follows selected language and keeps exact selected filename',async()=>{
+ const p=await portal();assert.ok(p.get('firmwareSelected'),'selected file copy must be localized');
+ assert.match(p.get('firmwareSelected').textContent,/ยังไม่เลือก/);
+ p.get('firmwareFile').files=[{name:'desk-duo-app.bin'}];p.get('firmwareFile').change();
+ assert.equal(p.get('firmwareSelected').textContent,'desk-duo-app.bin');
+ p.get('language').value='en';p.get('language').change();assert.equal(p.get('firmwareSelected').textContent,'desk-duo-app.bin');
+ p.get('firmwareFile').files=[];p.get('firmwareFile').change();assert.equal(p.get('firmwareSelected').textContent,'No file selected');
 });

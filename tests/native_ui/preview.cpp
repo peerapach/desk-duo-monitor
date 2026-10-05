@@ -1,4 +1,5 @@
 #include "lvgl.h"
+#include "src/misc/lv_text_private.h"
 #include "ui.hpp"
 #include "runtime.hpp"
 #include "assets.hpp"
@@ -17,6 +18,9 @@ namespace deskduo {
 Config cfg;
 Snapshot data;
 CodexUsageMode mode=CodexUsageMode::Both;
+Language language=Language::Thai;
+Language runtime_language(){return language;}
+DisplaySettings runtime_display_settings(){return {mode,language};}
 CodexUsageMode runtime_display_mode(){return mode;}
 uint64_t now_ms(){return clockMs;}
 RequestConfig runtime_config(){return {cfg,0};}
@@ -50,7 +54,14 @@ lv_obj_t* findBarBelow(lv_obj_t* reset){
     return nearest;
 }
 void tapTab(const char* name){
-    auto shaped=deskduo::shapeText(name);
+    const char* translated=name;
+    if(deskduo::language==deskduo::Language::English) {
+        if(std::strcmp(name,"คู่หู")==0)translated="Duo";
+        if(std::strcmp(name,"อากาศ")==0)translated="Weather";
+        if(std::strcmp(name,"หุ้น")==0)translated="Stocks";
+        if(std::strcmp(name,"ตั้งค่า")==0)translated="Setup";
+    }
+    auto shaped=deskduo::shapeText(translated);
     auto* tab=findLabel(lv_screen_active(),shaped.c_str());
     assert(tab && "all pages must be reachable by a visible bottom button");
     lv_obj_send_event(lv_obj_get_parent(tab),LV_EVENT_CLICKED,nullptr);
@@ -84,11 +95,28 @@ void assertTextFits(lv_obj_t* obj){
     lv_point_t natural{};
     lv_text_get_size(&natural,lv_label_get_text(obj),lv_obj_get_style_text_font(obj,0),
                      lv_obj_get_style_text_letter_space(obj,0),0,10000,LV_TEXT_FLAG_NONE);
+    if(natural.x>lv_obj_get_width(obj))std::cerr<<"Clipped label: "<<lv_label_get_text(obj)<<" width="<<natural.x<<" reserved="<<lv_obj_get_width(obj)<<"\n";
     assert(natural.x<=lv_obj_get_width(obj) && "weather value must fit its actual native font bounds");
     assert(natural.y<=lv_obj_get_style_text_font(obj,0)->line_height &&
            lv_obj_get_height(obj)<=lv_obj_get_style_text_font(obj,0)->line_height && "weather reading must stay on one baseline");
     lv_area_t box{};lv_obj_get_coords(obj,&box);
     assert(box.x1>=0 && box.x2<240 && box.y1>=24 && box.y2<256);
+}
+// Thai fallback has a taller line box. Verify actual glyph ink stays above
+// its usage bar, rather than treating a tall label box as harmless.
+void assertGlyphsAboveBar(lv_obj_t* label){
+    auto* bar=findBarBelow(label);assert(bar);
+    const auto* font=lv_obj_get_style_text_font(label,0);
+    const auto* text=lv_label_get_text(label);uint32_t offset=0;
+    int bottom=0;
+    while(text[offset]) {
+        const auto cp=lv_text_encoded_next(text,&offset);
+        lv_font_glyph_dsc_t glyph{};assert(lv_font_get_glyph_dsc(font,&glyph,cp,0));
+        if(glyph.box_h)bottom=std::max(bottom,static_cast<int>(font->line_height-font->base_line-glyph.ofs_y-1));
+    }
+    if(lv_obj_get_y(label)+bottom>=lv_obj_get_y(bar))std::cerr<<"Overlap "<<lv_label_get_text(label)<<" y="<<lv_obj_get_y(label)<<" glyphBottom="<<bottom<<" bar="<<lv_obj_get_y(bar)<<" height="<<font->line_height<<" baseline="<<font->base_line<<"\n";
+    assert(lv_obj_get_y(label)+font->line_height-font->base_line==lv_obj_get_y(bar)-4 && "reset baseline must stay in its reserved usage row after language rebuild");
+    assert(lv_obj_get_y(label)+bottom<lv_obj_get_y(bar) && "translated reset glyphs must not cross the fixed usage bar");
 }
 uint64_t regionHash(int x,int y,int width,int height){
     uint64_t hash=1469598103934665603ULL;
@@ -106,6 +134,7 @@ bool mintNear(int x,int y){
 void weatherChecks(){
     auto& data=deskduo::data;
     const auto originalWeather=data.weather;
+    deskduo::language=deskduo::Language::Thai;deskduo::ui_tick();
     tapTab("อากาศ");capture("weather.ppm");
     auto* temperature=weatherLabel("31.0");assertTextFits(temperature);
     assert(lv_obj_get_style_text_font(temperature,0)->line_height>=48 && "normal weather must use real large font");
@@ -272,6 +301,100 @@ void weatherChecks(){
     std::cout<<"Weather source-timezone: positive/negative/fractional/UTC0, midnight rollover, missing timestamp/offset, unchanged Bangkok device zone passed\n";
     std::cout<<"Calm weather: fresh/unknown/sparse/zero/flat/stale, exact WMO groups, native font bounds, long Thai, signed extremes, and 40 rebuild cycles passed\n";
 }
+// Language changes must rebuild the selected page on the UI task, preserve
+// truthful data/window selection, and use the actual embedded font metrics.
+void languageChecks(){
+    using namespace deskduo;
+    auto original=data;
+    for(auto selected:{Language::Thai,Language::English}) {
+        const bool english=selected==Language::English;
+        language=selected;clockMs+=1000;ui_tick();
+        const std::string suffix=english?"en":"th";
+        tapTab("คู่หู");mode=CodexUsageMode::Weekly;clockMs+=1000;
+        capture(("language-usage-weekly-"+suffix+".ppm").c_str());
+        assert(findLabel(lv_screen_active(),"21%"));
+        auto* reset=findLabel(lv_screen_active(),shapeText(english?"Weekly reset 07/10 14:00":"สัปดาห์ เริ่มใหม่ 07/10 14:00").c_str());
+        assert(reset);assertGlyphsAboveBar(reset);
+        language=english?Language::Thai:Language::English;clockMs+=20;ui_tick();
+        assert(findLabel(lv_screen_active(),"21%"));
+        assert(findLabel(lv_screen_active(),shapeText(english?"สัปดาห์ เริ่มใหม่ 07/10 14:00":"Weekly reset 07/10 14:00").c_str()));
+        language=selected;clockMs+=20;ui_tick();
+        data.claude.stale=true;data.claude.receivedAtMs=clockMs;clockMs+=1000;ui_tick();
+        assert(findLabel(lv_screen_active(),shapeText(english?"stale 0m":"เก่า 0น.").c_str()));
+        mode=CodexUsageMode::Both;clockMs+=1000;
+        capture(("language-usage-both-"+suffix+".ppm").c_str());
+        assert(findLabel(lv_screen_active(),"58%"));
+        tapTab("อากาศ");capture(("language-weather-"+suffix+".ppm").c_str());
+        assertTextFits(weatherLabel(english?"Partly cloudy":"มีเมฆบางส่วน"));
+        assertTextFits(weatherLabel(english?"Humidity":"ความชื้น"));
+        assertTextFits(weatherLabel(english?"Rain %":"โอกาสฝน"));
+        weatherLabel("กรุงเทพฯ"); // User-entered location remains unchanged.
+        if(english) {
+            struct Condition { int code; const char* text; };
+            for(const auto& condition:std::array<Condition,9>{{{0,"Clear"},{2,"Partly cloudy"},{3,"Cloudy"},{45,"Fog"},{51,"Drizzle"},{61,"Rain"},{71,"Snow"},{95,"Thunderstorm"},{4,"Condition --"}}}) {
+                data.weather.data->weatherCode=condition.code;clockMs+=1000;ui_tick();lv_obj_update_layout(lv_screen_active());
+                assertTextFits(weatherLabel(condition.text));
+            }
+            data.weather.data->weatherCode=2;clockMs+=1000;ui_tick();
+        }
+        const auto weather=data.weather;
+        data.weather.stale=true;data.weather.receivedAtMs=clockMs-59000;clockMs+=1000;
+        capture(("language-weather-stale-"+suffix+".ppm").c_str());
+        assertTextFits(weatherLabel(english?"Stale 1m":"ข้อมูลเก่า 1 น."));
+        for(uint64_t elapsed:{59ULL*60000,999ULL*3600000,2000ULL*3600000}) {
+            clockMs=data.weather.receivedAtMs+elapsed;ui_tick();lv_obj_update_layout(lv_screen_active());
+            auto* content=lv_obj_get_parent(weatherLabel("31.0"));
+            for(uint32_t k=0;k<lv_obj_get_child_count(content);++k){
+                auto* label=lv_obj_get_child(content,k);
+                if(lv_obj_check_type(label,&lv_label_class) && lv_obj_get_x(label)==142)assertTextFits(label);
+            }
+        }
+        data.weather.unknown=true;clockMs+=1000;
+        capture(("language-weather-unknown-"+suffix+".ppm").c_str());
+        assertTextFits(weatherLabel(english?"No data":"ยังไม่มีข้อมูล"));
+        assertTextFits(weatherLabel(english?"Condition --":"สภาพอากาศ --"));
+        assert(!findLabel(lv_screen_active(),"31.0"));
+        data.weather=weather;data.weather.data->temperature=1e300;clockMs+=1000;
+        capture(("language-weather-extreme-"+suffix+".ppm").c_str());
+        assertTextFits(weatherLabel(english?"Out of range":"เกินช่วง"));
+        data.weather=weather;
+        // Same-page switch must translate fixed labels and keep the weather view.
+        language=english?Language::Thai:Language::English;clockMs+=10;ui_tick();
+        weatherLabel(english?"ความชื้น":"Humidity");weatherLabel("31.0");weatherLabel("กรุงเทพฯ");
+        language=selected;clockMs+=10;ui_tick();
+        tapTab("หุ้น");capture(("language-stocks-"+suffix+".ppm").c_str());
+        assert(findLabel(lv_screen_active(),shapeText(english?"Stocks / Watchlist":"หุ้น / รายการติดตาม").c_str()));
+        assert(findLabel(lv_screen_active(),shapeText("หุ้นจำลอง").c_str()));
+        tapTab("ตั้งค่า");capture(("language-setup-"+suffix+".ppm").c_str());
+        assert(findLabel(lv_screen_active(),shapeText(english?"Desk Duo setup":"ตั้งค่า Desk Duo").c_str()));
+        assert(findLabel(lv_screen_active(),"hidden-new-token"));
+        language=english?Language::Thai:Language::English;clockMs+=10;ui_tick();
+        assert(findLabel(lv_screen_active(),"hidden-new-token"));
+        assert(findLabel(lv_screen_active(),shapeText(english?"ตั้งค่า Desk Duo":"Desk Duo setup").c_str()));
+        language=selected;clockMs+=10;ui_tick();
+        for(const char* tab:{"คู่หู","อากาศ","หุ้น"}) {
+            tapTab(tab);assert(!findLabel(lv_screen_active(),"hidden-new-token"));
+        }
+        const char* markers[]={"Claude","°C",english?"Stocks / Watchlist":"หุ้น / รายการติดตาม",english?"Desk Duo setup":"ตั้งค่า Desk Duo"};
+        for(int tab=0;tab<4;++tab) {
+            // Exercise top and bottom padding on the same full 60x44 targets
+            // after captions change, with a real LVGL input device.
+            for(auto point:{std::array<int,2>{tab*60+1,277},std::array<int,2>{tab*60+58,318}}) {
+                pointerTapAt(point[0],point[1]);
+                assert(findLabel(lv_screen_active(),shapeText(markers[tab]).c_str()));
+            }
+        }
+        tapTab("หุ้น");data=original;
+    }
+    clockMs+=1000;capture("language-rebuild-start.ppm");
+    lv_mem_monitor_t before{},after{};lv_mem_monitor(&before);
+    for(int i=0;i<40;++i){language=i%2?Language::Thai:Language::English;clockMs+=20;ui_tick();lv_refr_now(nullptr);}
+    language=Language::English;clockMs+=20;ui_tick();lv_refr_now(nullptr);
+    lv_mem_monitor(&after);
+    std::cout<<"Language rebuild heap before="<<before.free_size<<" after="<<after.free_size<<"\n";
+    assert(after.free_size+512>=before.free_size);
+    std::cout<<"Thai/English: actual page switches, usage Both/Weekly, Setup reveal, untouched user labels, weather stale/unknown/extremes and font bounds, 40 same-page language rebuilds passed\n";
+}
 int main(){
     setenv("TZ","Asia/Bangkok",1);tzset();
     lv_init();lv_tick_set_cb([]()->uint32_t{return clockMs;});
@@ -296,6 +419,8 @@ int main(){
     lv_indev_set_type(fakePointer,LV_INDEV_TYPE_POINTER);
     lv_indev_set_read_cb(fakePointer,[](lv_indev_t*,lv_indev_data_t* d){d->point.x=pointerX;d->point.y=pointerY;d->state=pointerState;});
     deskduo::ui_init();
+    deskduo::ui_tick();
+    assert(findLabel(lv_screen_active(),deskduo::shapeText("ไม่ทราบ").c_str()) && "Thai default must translate unknown usage status");
     auto* navScreen=lv_screen_active();
     lv_obj_update_layout(navScreen);
     const char* navNames[]={"คู่หู","อากาศ","หุ้น","ตั้งค่า"};
@@ -316,7 +441,7 @@ int main(){
         assert(pointerClicks[i]==3 && "real LVGL pointer must click icon area");
         pointerTapAt((c.x1+c.x2)/2,(c.y1+c.y2)/2);
         assert(pointerClicks[i]==4 && "real LVGL pointer must click caption area");
-        const char* pageMarkers[]={"Claude","°C","หุ้น / Watchlist","ตั้งค่า Desk Duo"};
+        const char* pageMarkers[]={"Claude","°C","หุ้น / รายการติดตาม","ตั้งค่า Desk Duo"};
         assert(findLabel(navScreen,deskduo::shapeText(pageMarkers[i]).c_str()) && "pointer clicks must select the requested page");
     }
     pointerTapAt(30,284);
@@ -343,6 +468,7 @@ int main(){
     deskduo::Stocks stocks;stocks.count=5;
     for(int k=0;k<5;++k){stocks.items[k].symbol=k==0?"AAPL":k==1?"NVDA":"MSFT";stocks.items[k].price=k==4?1e300:225.40+k;stocks.items[k].changePercent=k%2?-1.24:2.81;stocks.items[k].label="หุ้นจำลอง";stocks.items[k].currency="USD";stocks.items[k].quotedAt=1791097200+k*60;}
     data.stocks.data=stocks;data.stocks.unknown=false;
+    deskduo::language=deskduo::Language::English;
     clockMs=4000;capture("duo.ppm");
     assert(findLabel(lv_screen_active(),"7d  48%"));
     assert(findLabel(lv_screen_active(),"Weekly  21%"));
@@ -443,7 +569,7 @@ int main(){
     clockMs+=10000;deskduo::ui_tick();
     assert(findLabel(screen,deskduo::shapeText("กรุงเทพฯ").c_str()));
     clockMs+=5000;deskduo::ui_tick();
-    assert(findLabel(screen,deskduo::shapeText("หุ้น / Watchlist").c_str()));
+    assert(findLabel(screen,deskduo::shapeText("หุ้น / รายการติดตาม").c_str()));
     clockMs+=5000;deskduo::ui_tick();
     assert(findLabel(screen,"Claude") && "automatic rotation must skip Setup");
     assert(!findLabel(screen,"hidden-new-token"));
@@ -453,6 +579,7 @@ int main(){
     lv_mem_monitor(&after);
     assert(after.free_size+512>=before.free_size && "repeated setup reveal/navigation must not leak LVGL heap");
     capture("navigation-cycled.ppm");
+    languageChecks();
     std::cout<<"Setup token rotation, reflow, close/reopen checks passed; ";
     std::cout<<"Navigation/IP, fractional windows, rotation hold/skip checks passed; ";
     std::cout<<"LVGL heap after 40 reveal/close cycles: "<<after.total_size-after.free_size<<" bytes; ";

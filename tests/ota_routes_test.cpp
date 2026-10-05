@@ -70,8 +70,10 @@ extern const char portal_html[]="test page";
 RequestConfig runtime_config(){auto c=defaultConfig();c.setupPassword="test-admin";c.usageToken="test-usage-token-123";c.ssid="saved-network";c.wifiPassword="test-wifi-secret";c.weather.url="https://weather.test/data?key=test-query-secret";c.weather.headers={{"X-Key","test-header-secret"}};return {c,0};}
 DisplayPreference displayPreference;
 bool displaySave=true;
+DisplaySettings runtime_display_settings(){return displayPreference.settings();}
+Language runtime_language(){return displayPreference.language();}
 CodexUsageMode runtime_display_mode(){return displayPreference.get();}
-int runtime_display_patch(const std::string& json){return displayPreference.patch(json,[](CodexUsageMode){return displaySave;});}
+int runtime_display_patch(const std::string& json){return displayPreference.patch(json,[](const DisplaySettings&){return displaySave;});}
 int runtime_patch(const std::string&){++patches;return 204;}
 void runtime_usage(const Usage&){++usage;}
 uint64_t now_ms(){return clockMs;}
@@ -121,11 +123,11 @@ int main(int argc,char**){
 
     {
         auto e=exchange();auto r=request(e,"/api/display",HTTP_GET);
-        assert(dispatch(r)==ESP_OK && e.response==R"({"codexUsageMode":"both"})");
+        assert(dispatch(r)==ESP_OK && e.response==R"({"codexUsageMode":"both","language":"th"})");
         e=exchange();e.headers["Content-Type"]="application/json";e.body=R"({"codexUsageMode":"weekly"})";r=request(e,"/api/display");
         assert(dispatch(r)==ESP_OK && e.status=="204 No Content");
         e=exchange();r=request(e,"/api/display",HTTP_GET);
-        assert(dispatch(r)==ESP_OK && e.response==R"({"codexUsageMode":"weekly"})");
+        assert(dispatch(r)==ESP_OK && e.response==R"({"codexUsageMode":"weekly","language":"th"})");
         displaySave=false;e=exchange();e.headers["Content-Type"]="application/json";e.body=R"({"codexUsageMode":"both"})";r=request(e,"/api/display");
         assert(dispatch(r)==ESP_FAIL && e.status=="503 Service Unavailable");
         assert(runtime_display_mode()==CodexUsageMode::Weekly);displaySave=true;
@@ -137,6 +139,30 @@ int main(int argc,char**){
         assert(dispatch(r)==ESP_FAIL && e.status=="413 Content Too Large" && e.reads==0);
         e=exchange();e.headers["Content-Type"]="application/json";e.body=R"({"codexUsageMode":"both"})";e.body.resize(512,' ');r=request(e,"/api/display");
         assert(dispatch(r)==ESP_OK && e.status=="204 No Content");
+        assert(patches==0 && usage==0);
+    }
+
+    // The authenticated display route must preserve sparse compatibility and
+    // reject bad/origin/failed combined patches before publishing either field.
+    {
+        auto e=exchange();e.headers["Content-Type"]="application/json";e.body=R"({"language":"en"})";auto r=request(e,"/api/display");
+        assert(dispatch(r)==ESP_OK && runtime_language()==Language::English && runtime_display_mode()==CodexUsageMode::Both);
+        e=exchange();r=request(e,"/api/display",HTTP_GET);
+        assert(dispatch(r)==ESP_OK && e.response==R"({"codexUsageMode":"both","language":"en"})");
+        for(auto bad:{R"({"language":"TH"})",R"({"language":true})",R"({"language":null})",R"({"language":"en","language":"th"})",R"({"language":"th","codexUsageMode":"invalid"})",R"({"language":"th","unknown":0})"}) {
+            e=exchange();e.headers["Content-Type"]="application/json";e.body=bad;r=request(e,"/api/display");
+            assert(dispatch(r)==ESP_FAIL && e.status=="400 Bad Request" && runtime_language()==Language::English && runtime_display_mode()==CodexUsageMode::Both);
+        }
+        displaySave=false;e=exchange();e.headers["Content-Type"]="application/json";e.body=R"({"language":"th","codexUsageMode":"weekly"})";r=request(e,"/api/display");
+        assert(dispatch(r)==ESP_FAIL && e.status=="503 Service Unavailable" && runtime_language()==Language::English && runtime_display_mode()==CodexUsageMode::Both);displaySave=true;
+        for(const auto& origin:std::vector<std::string>{"https://evil.test","http://192.0.2.10.evil.test","null",std::string(257,'x')}) {
+            e=exchange();e.headers["Origin"]=origin;e.headers["Content-Type"]="application/json";e.body=R"({"language":"th"})";r=request(e,"/api/display");
+            assert(dispatch(r)==ESP_FAIL && e.status=="403 Forbidden" && e.reads==0 && runtime_language()==Language::English);
+        }
+        e=exchange();e.headers["Origin"]="http://192.0.2.10";e.headers["Content-Type"]="application/json";e.body=R"({"language":"th","codexUsageMode":"weekly"})";r=request(e,"/api/display");
+        assert(dispatch(r)==ESP_OK && runtime_language()==Language::Thai && runtime_display_mode()==CodexUsageMode::Weekly);
+        e=exchange();r=request(e,"/api/display",HTTP_GET);
+        assert(dispatch(r)==ESP_OK && e.response==R"({"codexUsageMode":"weekly","language":"th"})");
         assert(patches==0 && usage==0);
     }
 

@@ -611,14 +611,14 @@ int main(int argc, char** argv) {
         CHECK(preference.get() == Mode::Both);
         int writes=0;
         for(const auto& bad:std::vector<std::string>{"{}", "[]", "null", R"({"codexUsageMode":"5h"})", R"({"codexUsageMode":1})", R"({"codexUsageMode":"weekly","extra":true})", R"({"codexUsageMode":"both","codexUsageMode":"weekly"})", R"({"codexUsageMode":"weekly"}x)", std::string(513,' '), std::string(40,'[')+std::string(40,']')}) {
-            CHECK(preference.patch(bad,[&](Mode){++writes;return true;}) == 400);
+            CHECK(preference.patch(bad,[&](const deskduo::DisplaySettings&){++writes;return true;}) == 400);
         }
         CHECK(writes == 0);
-        CHECK(preference.patch(R"({"codexUsageMode":"weekly"})",[&](Mode next){++writes;CHECK(next == Mode::Weekly);CHECK(preference.get() == Mode::Both);return false;}) == 503);
+        CHECK(preference.patch(R"({"codexUsageMode":"weekly"})",[&](const deskduo::DisplaySettings& next){++writes;CHECK(next.mode == Mode::Weekly);CHECK(preference.get() == Mode::Both);return false;}) == 503);
         CHECK(preference.get() == Mode::Both);
-        CHECK(preference.patch(R"({"codexUsageMode":"weekly"})",[&](Mode next){++writes;CHECK(next == Mode::Weekly);CHECK(preference.get() == Mode::Both);return true;}) == 204);
+        CHECK(preference.patch(R"({"codexUsageMode":"weekly"})",[&](const deskduo::DisplaySettings& next){++writes;CHECK(next.mode == Mode::Weekly);CHECK(preference.get() == Mode::Both);return true;}) == 204);
         CHECK(preference.get() == Mode::Weekly);
-        CHECK(preference.patch(R"({"codexUsageMode":"both"})",[&](Mode){CHECK(preference.get() == Mode::Weekly);return true;}) == 204);
+        CHECK(preference.patch(R"({"codexUsageMode":"both"})",[&](const deskduo::DisplaySettings&){CHECK(preference.get() == Mode::Weekly);return true;}) == 204);
         CHECK(preference.get() == Mode::Both);
         deskduo::Usage selected;
         selected.primary=deskduo::UsageWindow{15,300,4102444800};

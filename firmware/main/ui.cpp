@@ -15,7 +15,7 @@ namespace deskduo {
 namespace {
 constexpr uint32_t black=0x000000, ink=0xF0F1EA, dim=0xA3AAA8, line=0x292F2E;
 constexpr uint32_t copper=0xEBA779, mint=0xC6E7DC;
-lv_font_t text12;
+lv_font_t text12, metricLatin12, metricThai12;
 lv_obj_t *screen, *clockLabel, *ipLabel, *content;
 lv_obj_t* mascot[2]{};
 lv_obj_t* values[16]{};
@@ -26,6 +26,8 @@ lv_obj_t* currencies[3]{};
 int page=0;
 bool setup=false;
 CodexUsageMode displayMode=CodexUsageMode::Both;
+Language language=Language::Thai;
+const char* tr(const char* thai,const char* english) { return language==Language::English?english:thai; }
 uint64_t rotated=0, refreshed=0, holdUntil=0;
 lv_obj_t* label(lv_obj_t* parent,int x,int y,int width,const std::string& value,bool large=false) {
     auto* obj=lv_label_create(parent);
@@ -37,12 +39,29 @@ lv_obj_t* label(lv_obj_t* parent,int x,int y,int width,const std::string& value,
     return obj;
 }
 void text(lv_obj_t* obj,const std::string& value) {
+    const auto* font=lv_obj_get_style_text_font(obj,0);
+    if(font==&metricLatin12 || font==&metricThai12) {
+        // Keep the original metric baseline. Thai fallback needs a taller
+        // line box, whose extra ascent must not push glyphs onto usage bars.
+        bool thai=false;
+        for(std::size_t i=0;i+1<value.size();++i)
+            if(static_cast<uint8_t>(value[i])==0xE0 &&
+               (static_cast<uint8_t>(value[i+1])==0xB8 || static_cast<uint8_t>(value[i+1])==0xB9))thai=true;
+        const auto* next=thai?&metricThai12:&metricLatin12;
+        if(next!=font) {
+            const int oldAscent=font->line_height-font->base_line;
+            const int newAscent=next->line_height-next->base_line;
+            lv_obj_set_y(obj,lv_obj_get_style_y(obj,0)+oldAscent-newAscent);
+            lv_obj_set_style_text_font(obj,next,0);
+        }
+    }
     auto shaped=shapeText(value);
     if(shaped!=lv_label_get_text(obj)) lv_label_set_text(obj,shaped.c_str());
 }
 lv_obj_t* metric(int x,int y,int width,const std::string& value,uint32_t color=ink) {
     auto* obj=label(content,x,y,width,value);
-    lv_obj_set_style_text_font(obj,&lv_font_montserrat_12,0);
+    lv_obj_set_style_text_font(obj,&metricLatin12,0);
+    text(obj,value);
     lv_obj_set_style_text_color(obj,lv_color_hex(color),0);
     return obj;
 }
@@ -64,9 +83,9 @@ std::string stamp(std::optional<int64_t> time,bool date=false) {
     char result[24]; std::strftime(result,sizeof(result),date?"%d/%m %H:%M":"%H:%M",&local); return result;
 }
 template<typename T> std::string age(const SourceSnapshot<T>& source) {
-    if(source.unknown) return "unknown";
+    if(source.unknown) return tr("ไม่ทราบ","unknown");
     auto seconds=(now_ms()-source.receivedAtMs)/1000;
-    return std::string(source.stale?"stale ":"age ")+std::to_string(seconds<3600?seconds/60:seconds/3600)+(seconds<3600?"m":"h");
+    return std::string(source.stale?tr("เก่า ","stale "):tr("รับ ","age "))+std::to_string(seconds<3600?seconds/60:seconds/3600)+(seconds<3600?tr("น.","m"):tr("ชม.","h"));
 }
 std::string reading(std::optional<double> number,const char* unit="") { return number?compactNumber(*number)+unit:"--"; }
 std::string concise(double value) {
@@ -78,12 +97,12 @@ std::string concise(double value) {
     return result;
 }
 std::string windowLabel(const std::optional<UsageWindow>& window,bool codex=false) {
-    if(!window || !window->windowMinutes) return "window --";
+    if(!window || !window->windowMinutes) return tr("ช่วง --","window --");
     const double minutes=*window->windowMinutes;
-    if(codex && minutes==10080) return "Weekly";
-    if(std::fmod(minutes,1440)==0) return concise(minutes/1440)+"d";
-    if(std::fmod(minutes,60)==0) return concise(minutes/60)+"h";
-    return concise(minutes)+"m";
+    if(codex && minutes==10080) return tr("สัปดาห์","Weekly");
+    if(std::fmod(minutes,1440)==0) return concise(minutes/1440)+tr("วัน","d");
+    if(std::fmod(minutes,60)==0) return concise(minutes/60)+tr("ชม.","h");
+    return concise(minutes)+tr("น.","m");
 }
 std::string tokenLines(const std::string& token) {
     std::string lines;
@@ -122,21 +141,24 @@ void buildPage() {
     mascot[0]=mascot[1]=nullptr;
     for(int i=0;i<4;++i) {
         const bool active=i==(setup?3:page);
+        const char* thai[]={"คู่หู","อากาศ","หุ้น","ตั้งค่า"};
+        const char* english[]={"Duo","Weather","Stocks","Setup"};
+        text(captions[i],tr(thai[i],english[i]));
         lv_obj_set_style_text_color(captions[i],lv_color_hex(active?(i==0?copper:mint):dim),0);
         lv_obj_invalidate(buttons[i]);
     }
     if(setup) {
         auto cfg=runtime_config().config;
-        label(content,10,4,220,"ตั้งค่า Desk Duo");
+        label(content,10,4,220,tr("ตั้งค่า Desk Duo","Desk Duo setup"));
         label(content,10,32,220,ap_name());
-        label(content,10,56,220,"AP / admin: "+cfg.setupPassword);
+        label(content,10,56,220,std::string(tr("AP / ผู้ดูแล: ","AP / admin: "))+cfg.setupPassword);
         label(content,10,82,220,"http://192.168.4.1");
         values[0]=label(content,10,107,220,"LAN: "+station_address());
-        label(content,10,133,220,"Usage bearer token:");
+        label(content,10,133,220,tr("โทเค็นส่งข้อมูล:","Usage bearer token:"));
         // Credentials exist only while an explicit local reveal is open.
         values[1]=metric(10,157,220,tokenLines(cfg.usageToken));
         lv_label_set_long_mode(values[1],LV_LABEL_LONG_WRAP); lv_obj_update_layout(values[1]);
-        values[2]=label(content,10,167+lv_obj_get_height(values[1]),220,"BOOT: กลับ / เปิดตั้งค่า");
+        values[2]=label(content,10,167+lv_obj_get_height(values[1]),220,tr("BOOT: กลับ / เปิดตั้งค่า","BOOT: return / setup"));
         lv_obj_add_flag(content,LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_set_scroll_dir(content,LV_DIR_VER);
         lv_obj_set_scrollbar_mode(content,LV_SCROLLBAR_MODE_AUTO);
@@ -148,13 +170,13 @@ void buildPage() {
             mascot[p]=sprite(p,8,y+25);
             auto* name=metric(82,y+4,78,p?"Codex":"Claude");
             lv_obj_set_style_text_font(name,&lv_font_montserrat_14,0);
-            values[p*6]=metric(151,y+5,81,"unknown",dim);
+            values[p*6]=metric(151,y+5,81,tr("ไม่ทราบ","unknown"),dim);
             lv_obj_set_style_text_align(values[p*6],LV_TEXT_ALIGN_RIGHT,0);
             values[p*6+1]=label(content,82,y+19,150,"--",true);
-            values[p*6+2]=metric(82,y+55,150,"window -- reset --",dim);
+            values[p*6+2]=metric(82,y+53,150,std::string(tr("ช่วง --","window --"))+tr(" เริ่มใหม่ --"," reset --"),dim);
             lv_label_set_long_mode(values[p*6+2],LV_LABEL_LONG_SCROLL_CIRCULAR);
-            values[p*6+3]=metric(82,y+76,150,"window --  --");
-            values[p*6+4]=metric(82,y+94,150,"reset --",dim);
+            values[p*6+3]=metric(82,y+76,150,std::string(tr("ช่วง --","window --"))+"  --");
+            values[p*6+4]=metric(82,y+94,150,tr("เริ่มใหม่ --","reset --"),dim);
             for(int k=0;k<2;++k) {
                 auto* bar=bars[p*2+k]=lv_bar_create(content);
                 lv_obj_remove_style_all(bar);
@@ -171,11 +193,11 @@ void buildPage() {
     } else {
         if(page==2) { mascot[0]=sprite(0,9,197,true); mascot[1]=sprite(1,48,197,true); }
         if(page==1) {
-            weather_view_create(content);
+            weather_view_create(content,language);
         } else {
-            values[15]=metric(92,213,138,"unknown",dim);
+            values[15]=metric(92,213,138,tr("ไม่ทราบ","unknown"),dim);
             lv_obj_set_style_text_align(values[15],LV_TEXT_ALIGN_RIGHT,0);
-            label(content,12,4,216,"หุ้น / Watchlist");
+            label(content,12,4,216,tr("หุ้น / รายการติดตาม","Stocks / Watchlist"));
             for(int k=0;k<3;++k) {
                 int y=33+k*54;
                 values[k*4]=metric(12,y+3,69,"--");
@@ -191,7 +213,7 @@ void buildPage() {
                 lv_label_set_long_mode(values[k*4+2],LV_LABEL_LONG_SCROLL_CIRCULAR);
                 values[k*4+3]=metric(147,y+23,83,"--");
                 lv_obj_set_style_text_align(values[k*4+3],LV_TEXT_ALIGN_RIGHT,0);
-                values[12+k]=metric(12,y+38,218,"quote --",dim);
+                values[12+k]=metric(12,y+38,218,tr("ราคา ณ --","quote --"),dim);
                 if(k<2)rule(content,12,y+51,218);
             }
         }
@@ -205,8 +227,11 @@ void switchPage(int next,bool manual=true,bool reveal=false) {
 }
 }
 void ui_init() {
+    language=runtime_language();
     text12=lv_font_montserrat_12; text12.fallback=&ct_font_thai_12;
     text12.line_height=ct_font_thai_12.line_height; text12.base_line=ct_font_thai_12.base_line;
+    metricLatin12=lv_font_montserrat_12;
+    metricThai12=text12;
     screen=lv_screen_active(); lv_obj_set_style_bg_color(screen,lv_color_hex(black),0);
     lv_obj_set_style_text_color(screen,lv_color_hex(ink),0); lv_obj_remove_flag(screen,LV_OBJ_FLAG_SCROLLABLE);
     auto* title=label(screen,10,1,160,"Desk Duo"); lv_obj_set_style_text_font(title,&lv_font_montserrat_14,0);
@@ -237,7 +262,11 @@ void ui_init() {
     setup=runtime_config().config.ssid.empty(); rotated=now_ms(); buildPage();
 }
 void ui_tick() {
-    const auto nextMode=runtime_display_mode();
+    const auto preferences=runtime_display_settings();
+    const auto nextMode=preferences.mode;
+    if(preferences.language!=language) {
+        language=preferences.language;refreshed=0;buildPage();
+    }
     if(nextMode!=displayMode) { displayMode=nextMode; refreshed=0; }
     const auto now=now_ms(); static uint64_t pressStart=0;
     if(!gpio_get_level(GPIO_NUM_0)) { if(!pressStart)pressStart=now; }
@@ -263,7 +292,7 @@ void ui_tick() {
             const auto& src=p?snapshot.codex:snapshot.claude;
             const bool weekly=p==1 && displayMode==CodexUsageMode::Weekly;
             auto selected=weekly && src.data?codexWeeklyWindow(*src.data):std::nullopt;
-            text(values[p*6],weekly && !selected?"unknown":age(src));
+            text(values[p*6],weekly && !selected?tr("ไม่ทราบ","unknown"):age(src));
             if(weekly && !selected)lv_obj_add_flag(bars[p*2],LV_OBJ_FLAG_HIDDEN);
             else lv_obj_remove_flag(bars[p*2],LV_OBJ_FLAG_HIDDEN);
             for(auto* unused:{values[p*6+3],values[p*6+4],bars[p*2+1]}) {
@@ -274,13 +303,13 @@ void ui_tick() {
             if(src.data) { primary=src.data->primary; secondary=src.data->secondary; }
             if(weekly) primary=selected;
             text(values[p*6+1],primary?concise(primary->usedPercent)+"%":"--");
-            text(values[p*6+2],(weekly?"Weekly":windowLabel(primary,p==1))+" reset "+stamp(primary?primary->resetsAt:std::nullopt,true));
+            text(values[p*6+2],(weekly?std::string(tr("สัปดาห์","Weekly")):windowLabel(primary,p==1))+tr(" เริ่มใหม่ "," reset ")+stamp(primary?primary->resetsAt:std::nullopt,true));
             text(values[p*6+3],windowLabel(secondary,p==1)+"  "+(secondary?concise(secondary->usedPercent)+"%":"--"));
-            text(values[p*6+4],"reset "+stamp(secondary?secondary->resetsAt:std::nullopt,true));
+            text(values[p*6+4],std::string(tr("เริ่มใหม่ ","reset "))+stamp(secondary?secondary->resetsAt:std::nullopt,true));
             for(int k=0;k<2;++k) { const auto& w=k?secondary:primary; lv_bar_set_value(bars[p*2+k],w?static_cast<int>(w->usedPercent):0,LV_ANIM_OFF); }
         }
     } else if(page==1) {
-        weather_view_update(snapshot,now);
+        weather_view_update(snapshot,now,language);
     } else {
         const auto& stocks=snapshot.stocks.data;
         std::size_t first=stocks && stocks->count>3?((now/6000)%2)*3:0;
@@ -288,7 +317,7 @@ void ui_tick() {
             if(!stocks || first+k>=stocks->count) { for(int j=0;j<4;++j)text(values[k*4+j],"--"); text(values[12+k],""); text(currencies[k],""); continue; }
             const auto& stock=stocks->items[first+k];
             text(values[k*4],stock.symbol); text(values[k*4+1],reading(stock.price)); text(currencies[k],stock.currency);
-            text(values[k*4+2],stock.label); text(values[12+k],"quote "+stamp(stock.quotedAt,true));
+            text(values[k*4+2],stock.label); text(values[12+k],std::string(tr("ราคา ณ ","quote "))+stamp(stock.quotedAt,true));
             text(values[k*4+3],reading(stock.changePercent,"%"));
             lv_obj_set_style_text_color(values[k*4+3],lv_color_hex(stock.changePercent && *stock.changePercent<0?copper:mint),0);
         }
