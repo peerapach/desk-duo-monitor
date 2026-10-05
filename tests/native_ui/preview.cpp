@@ -10,6 +10,7 @@
 #include <cstdlib>
 #include <ctime>
 #include <array>
+#include <limits>
 int buttonLevel=1;
 uint64_t clockMs=2000;
 namespace deskduo {
@@ -71,6 +72,160 @@ void pointerTapAt(int x,int y){
     pointerState=LV_INDEV_STATE_RELEASED; lv_indev_read(fakePointer);
     deskduo::ui_tick();
 }
+// These tests catch fabricated missing readings, wrong WMO branches, text
+// clipping, misplaced chart annotations, and stale pointers after rebuilds.
+lv_obj_t* weatherLabel(const char* value){
+    auto* obj=findLabel(lv_screen_active(),deskduo::shapeText(value).c_str());
+    if(!obj)std::cerr<<"Missing weather label: "<<value<<"\n";
+    assert(obj && "weather reading must appear on actual LVGL page");
+    return obj;
+}
+void assertTextFits(lv_obj_t* obj){
+    lv_point_t natural{};
+    lv_text_get_size(&natural,lv_label_get_text(obj),lv_obj_get_style_text_font(obj,0),
+                     lv_obj_get_style_text_letter_space(obj,0),0,10000,LV_TEXT_FLAG_NONE);
+    assert(natural.x<=lv_obj_get_width(obj) && "weather value must fit its actual native font bounds");
+    assert(natural.y<=lv_obj_get_style_text_font(obj,0)->line_height &&
+           lv_obj_get_height(obj)<=lv_obj_get_style_text_font(obj,0)->line_height && "weather reading must stay on one baseline");
+    lv_area_t box{};lv_obj_get_coords(obj,&box);
+    assert(box.x1>=0 && box.x2<240 && box.y1>=24 && box.y2<256);
+}
+uint64_t regionHash(int x,int y,int width,int height){
+    uint64_t hash=1469598103934665603ULL;
+    for(int j=y;j<y+height;++j)for(int i=x;i<x+width;++i)for(int c=0;c<3;++c)
+        hash=(hash^frame[(j*240+i)*3+c])*1099511628211ULL;
+    return hash;
+}
+bool mintNear(int x,int y){
+    for(int j=y-2;j<=y+2;++j)for(int i=x-2;i<=x+2;++i){
+        auto* p=&frame[(j*240+i)*3];
+        if(p[0]>150 && p[1]>180 && p[2]>170 && p[1]>p[0]+10)return true;
+    }
+    return false;
+}
+void weatherChecks(){
+    auto& data=deskduo::data;
+    const auto originalWeather=data.weather;
+    tapTab("อากาศ");capture("weather.ppm");
+    auto* temperature=weatherLabel("31.0");assertTextFits(temperature);
+    assert(lv_obj_get_style_text_font(temperature,0)->line_height>=48 && "normal weather must use real large font");
+    auto* unit=weatherLabel("°C");assertTextFits(unit);
+    lv_area_t tempBox{},unitBox{};lv_obj_get_coords(temperature,&tempBox);lv_obj_get_coords(unit,&unitBox);
+    assert(tempBox.x2<unitBox.x1);
+    weatherLabel("มีเมฆบางส่วน");weatherLabel("โอกาสฝน");
+    auto* content=lv_obj_get_parent(temperature);
+    assert(lv_obj_get_y(content)==24 && lv_obj_get_height(content)==232);
+    assert(!lv_obj_has_flag(content,LV_OBJ_FLAG_SCROLLABLE));
+    const char* times[]={"14:00","15:00","16:00","17:00"};
+    const char* readings[]={"32.0°","33.0°","34.0°","35.0°"};
+    for(int k=0;k<4;++k){
+        auto* t=weatherLabel(times[k]);auto* r=weatherLabel(readings[k]);assertTextFits(t);assertTextFits(r);
+        assert(lv_obj_get_x(t)==12+54*k && lv_obj_get_width(t)==54);
+        assert(lv_obj_get_x(r)==lv_obj_get_x(t));
+        assert(lv_obj_get_y(r)>lv_obj_get_y(t) && lv_obj_get_y(r)<198);
+        assert(lv_obj_get_style_text_font(r,0)->line_height>=14);
+    }
+    // Hand-checked scale for 32,33,34,35: padded range 31.64..35.36,
+    // point rows 60,53,47,40 within the plot at screen y=160.
+    assert(mintNear(39,220) && mintNear(93,213) && mintNear(147,207) && mintNear(201,200));
+    // Supported codes select distinct condition artwork; codes inside arbitrary
+    // numeric gaps must remain unknown instead of being classified as fog/rain.
+    struct Condition { const char* label; std::initializer_list<int> codes; };
+    const Condition groups[]={
+        {"ท้องฟ้าแจ่มใส",{0,1}}, {"มีเมฆบางส่วน",{2}}, {"เมฆมาก",{3}},
+        {"หมอก",{45,48}}, {"ฝนปรอย",{51,53,55,56,57}},
+        {"ฝนตก",{61,63,65,66,67,80,81,82}},
+        {"หิมะ",{71,73,75,77,85,86}}, {"พายุฝน",{95,96,97,99}},
+        {"สภาพอากาศ --",{-1,4,44,46,49,50,52,58,60,68,70,78,79,83,87,94,98,100}}
+    };
+    std::array<uint64_t,9> icons{};
+    for(unsigned group=0;group<9;++group){
+        for(int code:groups[group].codes){
+            data.weather.data->weatherCode=code;clockMs+=1000;capture("weather-condition-last.ppm");
+            weatherLabel(groups[group].label);
+            auto hash=regionHash(162,68,65,65);
+            if(!icons[group])icons[group]=hash;
+            else assert(hash==icons[group] && "same condition group must keep consistent artwork");
+        }
+        for(unsigned previous=0;previous<group;++previous)
+            assert(icons[group]!=icons[previous] && "weather groups need distinguishable native artwork");
+        capture(("weather-condition-"+std::to_string(group)+".ppm").c_str());
+    }
+    data.weather.data->weatherCode.reset();clockMs+=1000;capture("weather-absent-code.ppm");
+    assert(regionHash(162,68,65,65)==icons[8]);
+    data.weather.data->weatherCode=63;data.weather.stale=true;
+    clockMs+=60000;
+    data.weather.receivedAtMs=clockMs-60000;clockMs+=1000;capture("weather-rain-stale.ppm");
+    weatherLabel("ข้อมูลเก่า 1 น.");weatherLabel("31.0");
+    data.weatherLabel="สถานีอากาศกรุงเทพมหานครชื่อภาษาไทยยาวมาก";
+    clockMs+=1000;capture("weather-long-thai.ppm");
+    auto* place=weatherLabel(data.weatherLabel.c_str());auto* status=weatherLabel("ข้อมูลเก่า 1 น.");
+    lv_area_t placeBox{},statusBox{};lv_obj_get_coords(place,&placeBox);lv_obj_get_coords(status,&statusBox);
+    assert(placeBox.x2<statusBox.x1 && "long Thai location must not overlap receipt status");
+    assert(lv_label_get_long_mode(place)==LV_LABEL_LONG_DOT || lv_label_get_long_mode(place)==LV_LABEL_LONG_SCROLL_CIRCULAR);
+    assertTextFits(status);
+    // Receipt ages of two-digit minutes and many hours must remain readable.
+    for(uint64_t elapsed:{59ULL*60000,999ULL*3600000,2000ULL*3600000}){
+        clockMs=data.weather.receivedAtMs+elapsed;deskduo::ui_tick();lv_obj_update_layout(lv_screen_active());
+        assertTextFits(status);
+    }
+    data.weatherLabel="กรุงเทพฯ";data.weather.stale=false;
+    data.weather.data->temperature=0;data.weather.data->humidity=0;
+    for(int k=0;k<4;++k){data.weather.data->hourlyTemperatures[k]=0;data.weather.data->hourlyRainProbability[k]=0;}
+    clockMs+=1000;capture("weather-flat-zero.ppm");weatherLabel("0.0");weatherLabel("0%");
+    // A flat series is centered safely; each slot keeps a real point and time.
+    for(int k=0;k<4;++k)assert(mintNear(39+54*k,210));
+    for(uint32_t i=0;i<lv_obj_get_child_count(content);++i){
+        auto* child=lv_obj_get_child(content,i);
+        if(lv_obj_check_type(child,&lv_label_class) && lv_obj_get_y(child)==210)
+            assert(std::strcmp(lv_label_get_text(child),"0%")==0 && "all real zero rain probabilities must remain visible");
+    }
+    data.weather.data->hourlyRainProbability[0].reset();clockMs+=1000;deskduo::ui_tick();
+    assert(mintNear(39,210)); // Missing rain never invalidates a known temperature.
+    data.weather.data->hourlyCount=3;clockMs+=1000;capture("weather-count-three.ppm");
+    assert(!findLabel(lv_screen_active(),"17:00") && !mintNear(201,210));
+    data.weather.data->hourlyCount=4;data.weather.data->hourlyTemperatures[1].reset();
+    data.weather.data->hourlyTimes[3].reset();
+    clockMs+=1000;capture("weather-sparse.ppm");
+    assert(!findLabel(lv_screen_active(),"15:00") && findLabel(lv_screen_active(),"16:00") && !findLabel(lv_screen_active(),"17:00"));
+    assert(mintNear(39,210) && mintNear(147,210));
+    assert(!mintNear(66,210) && !mintNear(120,210) && "sparse plot must not bridge a missing slot");
+    assert(!mintNear(93,210) && !mintNear(201,210));
+    data.weather.data->hourlyCount=0;clockMs+=1000;capture("weather-count-zero.ppm");
+    assert(!findLabel(lv_screen_active(),"14:00") && !findLabel(lv_screen_active(),"16:00"));
+    assert(!mintNear(39,210) && !mintNear(147,210));
+    data.weather.unknown=true;clockMs+=1000;capture("weather-unknown.ppm");
+    weatherLabel("ยังไม่มีข้อมูล");assert(!findLabel(lv_screen_active(),"0.0"));
+    assert(!findLabel(lv_screen_active(),"14:00"));assert(regionHash(162,68,65,65)==icons[8]);
+    const auto retained=data.weather.data;data.weather.data.reset();data.weather.unknown=false;
+    clockMs+=1000;capture("weather-no-data.ppm");weatherLabel("ยังไม่มีข้อมูล");
+    assert(regionHash(162,68,65,65)==icons[8]);data.weather.data=retained;
+    data.weather.unknown=false;data.weather.data->hourlyCount=4;
+    for(int k=0;k<4;++k){data.weather.data->hourlyTimes[k]=1791097200+k*3600;data.weather.data->hourlyTemperatures[k]=-99.9+k;}
+    for(double value:{-99.9,999.9,-999.9,999.99,-999.99,1e300,-1e300,std::numeric_limits<double>::infinity()}){
+        data.weather.data->temperature=value;clockMs+=1000;capture("weather-extreme-last.ppm");
+        const char* expected=value==-99.9?"-99.9":value==999.9?"999.9":value==-999.9?"-999.9":value==999.99?"1000.0":value==-999.99?"-1000.0":"เกินช่วง";
+        assertTextFits(weatherLabel(expected));
+        for(int k=0;k<4;++k)assertTextFits(weatherLabel((std::string(k==0?"-99.9":k==1?"-98.9":k==2?"-97.9":"-96.9")+"°").c_str()));
+        if(value==-999.9)capture("weather-extremes.ppm");
+    }
+    data.weather.data->hourlyTemperatures={-999.99,999.99,-999.9,999.9};
+    clockMs+=1000;capture("weather-forecast-extremes.ppm");
+    const char* wideReadings[]={"-1000.0°","1000.0°","-999.9°","999.9°"};
+    for(int k=0;k<4;++k){
+        auto* reading=weatherLabel(wideReadings[k]);assertTextFits(reading);
+        assert(lv_obj_get_x(reading)==12+54*k && lv_obj_get_width(reading)==54);
+        assert(lv_obj_get_style_text_font(reading,0)->line_height>=12);
+    }
+    // Rebuild pages repeatedly after edge cases, then update current weather.
+    lv_mem_monitor_t before{},after{};lv_mem_monitor(&before);
+    for(int i=0;i<40;++i){tapTab("คู่หู");tapTab("หุ้น");tapTab("อากาศ");}
+    lv_mem_monitor(&after);assert(after.free_size+512>=before.free_size);
+    std::cout<<"Weather LVGL heap after 40 page rebuild cycles: "<<after.total_size-after.free_size<<" bytes; free "<<after.free_size<<" bytes\n";
+    data.weather=originalWeather;
+    clockMs+=1000;capture("weather-navigation-cycled.ppm");weatherLabel("31.0");
+    std::cout<<"Calm weather: fresh/unknown/sparse/zero/flat/stale, exact WMO groups, native font bounds, long Thai, signed extremes, and 40 rebuild cycles passed\n";
+}
 int main(){
     setenv("TZ","Asia/Bangkok",1);tzset();
     lv_init();lv_tick_set_cb([]()->uint32_t{return clockMs;});
@@ -115,7 +270,7 @@ int main(){
         assert(pointerClicks[i]==3 && "real LVGL pointer must click icon area");
         pointerTapAt((c.x1+c.x2)/2,(c.y1+c.y2)/2);
         assert(pointerClicks[i]==4 && "real LVGL pointer must click caption area");
-        const char* pageMarkers[]={"Claude","--°C","หุ้น / Watchlist","ตั้งค่า Desk Duo"};
+        const char* pageMarkers[]={"Claude","°C","หุ้น / Watchlist","ตั้งค่า Desk Duo"};
         assert(findLabel(navScreen,deskduo::shapeText(pageMarkers[i]).c_str()) && "pointer clicks must select the requested page");
     }
     pointerTapAt(30,284);
@@ -135,6 +290,7 @@ int main(){
     data.claude.data=usage;data.claude.unknown=false;data.claude.receivedAtMs=1000;
     usage.primary->usedPercent=58;usage.secondary->usedPercent=21;data.codex.data=usage;data.codex.unknown=false;
     deskduo::Weather w;w.temperature=31;w.humidity=68;w.weatherCode=2;
+    w.hourlyCount=4;
     for(int k=0;k<4;++k){w.hourlyTimes[k]=1791097200+k*3600;w.hourlyTemperatures[k]=32+k;w.hourlyRainProbability[k]=35+k;}
     data.weatherLabel="กรุงเทพฯ";data.weather.data=w;data.weather.unknown=false;
     deskduo::Stocks stocks;stocks.count=5;
@@ -197,9 +353,7 @@ int main(){
     assert(findLabel(lv_screen_active(),"reset 02/01 07:00"));
     assert(findLabel(lv_screen_active(),"stale 0m"));
     data.claude.data=usage;data.claude.stale=false;
-    tapTab("อากาศ");capture("weather.ppm");
-    assert(findLabel(lv_screen_active(),"31°C"));
-    assert(findLabel(lv_screen_active(),"32°\n35%"));
+    weatherChecks();
     tapTab("หุ้น");capture("stocks.ppm");
     clockMs=8000;capture("stocks-extremes.ppm");
     data.stocks.data->items[0].label="หุ้นบริษัทภาษาไทยชื่อยาวสำหรับตรวจการแสดงผล";

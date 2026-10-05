@@ -4,6 +4,7 @@
 #include "assets.hpp"
 #include "character_assets.hpp"
 #include "fonts/ct_font_thai.h"
+#include "weather_view.hpp"
 #include "driver/gpio.h"
 #include "lvgl.h"
 #include <algorithm>
@@ -110,6 +111,7 @@ void navIcon(lv_event_t* event) {
     if(selected) box(14,41,32,2,1,true);
 }
 void buildPage() {
+    weather_view_reset();
     if(content) lv_obj_delete(content);
     content=lv_obj_create(screen); lv_obj_remove_style_all(content);
     lv_obj_set_pos(content,0,24); lv_obj_set_size(content,240,232);
@@ -168,21 +170,11 @@ void buildPage() {
         rule(content,10,115,220);
     } else {
         if(page==2) { mascot[0]=sprite(0,9,197,true); mascot[1]=sprite(1,48,197,true); }
-        values[15]=metric(92,213,138,"unknown",dim);
-        lv_obj_set_style_text_align(values[15],LV_TEXT_ALIGN_RIGHT,0);
         if(page==1) {
-            values[0]=label(content,12,5,216,"อากาศ");
-            lv_label_set_long_mode(values[0],LV_LABEL_LONG_SCROLL_CIRCULAR);
-            values[1]=label(content,12,34,216,"--°C",true);
-            values[2]=label(content,12,75,216,"สภาพอากาศ --");
-            values[3]=label(content,12,104,216,"ความชื้น --");
-            rule(content,10,135,220);
-            for(int k=0;k<4;++k) {
-                values[4+k]=metric(10+k*58,143,57,"--",dim);
-                values[8+k]=metric(10+k*58,163,57,"--\n--");
-                lv_label_set_long_mode(values[8+k],LV_LABEL_LONG_SCROLL_CIRCULAR);
-            }
+            weather_view_create(content);
         } else {
+            values[15]=metric(92,213,138,"unknown",dim);
+            lv_obj_set_style_text_align(values[15],LV_TEXT_ALIGN_RIGHT,0);
             label(content,12,4,216,"หุ้น / Watchlist");
             for(int k=0;k<3;++k) {
                 int y=33+k*54;
@@ -288,22 +280,7 @@ void ui_tick() {
             for(int k=0;k<2;++k) { const auto& w=k?secondary:primary; lv_bar_set_value(bars[p*2+k],w?static_cast<int>(w->usedPercent):0,LV_ANIM_OFF); }
         }
     } else if(page==1) {
-        text(values[0],snapshot.weatherLabel.empty()?"อากาศ":snapshot.weatherLabel);
-        const auto& weather=snapshot.weather.data;
-        text(values[1],weather && weather->temperature?concise(*weather->temperature)+"°C":"--°C");
-        const char* condition="สภาพอากาศ --";
-        if(weather && weather->weatherCode) {
-            int code=*weather->weatherCode;
-            condition=code==0?"ท้องฟ้าแจ่มใส":code<=3?"มีเมฆ":code<=48?"หมอก":code>=95?"พายุฝน":"ฝน / หิมะ";
-        }
-        text(values[2],condition); text(values[3],"ความชื้น "+(weather && weather->humidity?concise(*weather->humidity)+"%":"--"));
-        for(int k=0;k<4;++k) {
-            text(values[4+k],weather?stamp(weather->hourlyTimes[k]):"--");
-            std::string temperature=weather && weather->hourlyTemperatures[k]?concise(*weather->hourlyTemperatures[k])+"°":"--";
-            std::string rain=weather && weather->hourlyRainProbability[k]?concise(*weather->hourlyRainProbability[k])+"%":"--";
-            text(values[8+k],temperature+"\n"+rain);
-        }
-        text(values[15],age(snapshot.weather));
+        weather_view_update(snapshot,now);
     } else {
         const auto& stocks=snapshot.stocks.data;
         std::size_t first=stocks && stocks->count>3?((now/6000)%2)*3:0;
