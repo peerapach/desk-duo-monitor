@@ -32,6 +32,11 @@ const char portal_html[] = R"HTML(<!doctype html><html lang="th"><meta charset="
 <label><span data-i18n="ภาษา / Language">ภาษา</span><select id="language"><option value="th" data-i18n="ไทย / Thai">ไทย</option><option value="en" data-i18n="อังกฤษ / English">อังกฤษ</option></select></label><p id="languageStored" role="status"></p>
 <label><span data-i18n="แสดงช่วง usage">แสดงช่วงการใช้งาน</span><select id="codexUsageMode"><option value="both" data-i18n="5h + Weekly">5 ชม. + สัปดาห์</option><option value="weekly" data-i18n="Weekly อย่างเดียว">สัปดาห์อย่างเดียว</option></select></label>
 <label><span data-i18n="ความสว่าง">ความสว่าง</span> <output id="brightnessValue" for="brightnessPercent">100%</output><input id="brightnessPercent" type="range" min="5" max="100" step="1" value="100"></label><p id="brightnessStored" role="status"></p>
+<label><input id="brightnessAuto" type="checkbox"><span data-i18n="ความสว่างอัตโนมัติ">ความสว่างอัตโนมัติ</span></label>
+<label><span data-i18n="เริ่มกลางวัน">เริ่มกลางวัน</span><input id="brightnessDayStart" type="time" step="60" required value="06:00"></label>
+<label><span data-i18n="เริ่มกลางคืน">เริ่มกลางคืน</span><input id="brightnessNightStart" type="time" step="60" required value="18:00"></label>
+<small data-i18n="ใช้นาฬิกาบน ESP32 กลางวันเต็มค่าฐาน กลางคืนครึ่งหนึ่ง (ต่ำสุด 5%)">ใช้นาฬิกาบน ESP32 กลางวันเต็มค่าฐาน กลางคืนครึ่งหนึ่ง (ต่ำสุด 5%)</small>
+<p id="displayCurrent" role="status"></p><p id="brightnessScheduleStored" role="status"></p><p id="brightnessEffective" role="status"></p>
 <button id="displayButton" type="submit" disabled><span data-i18n="บันทึกการแสดง usage">บันทึกการแสดงผล</span></button><p id="displayStatus" role="status"></p>
 </fieldset></form>
 <form id="firmware"><fieldset><legend><span data-i18n="Firmware update">อัปเดตเฟิร์มแวร์</span></legend>
@@ -45,7 +50,27 @@ const char portal_html[] = R"HTML(<!doctype html><html lang="th"><meta charset="
 <script>
 const $=id=>document.getElementById(id);
 const copy={
- "ความสว่าง":{"th":"ความสว่าง","en":"Brightness"},
+"ความสว่างอัตโนมัติ":{"th": "ความสว่างอัตโนมัติ", "en": "Auto brightness"},
+"เริ่มกลางวัน":{"th": "เริ่มกลางวัน", "en": "Day starts"},
+"เริ่มกลางคืน":{"th": "เริ่มกลางคืน", "en": "Night starts"},
+"ใช้นาฬิกาบน ESP32 กลางวันเต็มค่าฐาน กลางคืนครึ่งหนึ่ง (ต่ำสุด 5%)":{"th": "ใช้นาฬิกาบน ESP32 กลางวันเต็มค่าฐาน กลางคืนครึ่งหนึ่ง (ต่ำสุด 5%)", "en": "Uses the clock on ESP32. Day uses the full base; night uses half (minimum 5%)."},
+"อัตโนมัติที่บันทึก: ":{"th": "อัตโนมัติที่บันทึก: ", "en": "Saved Auto: "},
+"เปิด":{"th": "เปิด", "en": "On"},
+"ปิด":{"th": "ปิด", "en": "Off"},
+" · กลางวัน ":{"th": " · กลางวัน ", "en": " · Day "},
+" · กลางคืน ":{"th": " · กลางคืน ", "en": " · Night "},
+"ยังไม่ทราบเวลาที่บันทึก":{"th": "ยังไม่ทราบเวลาที่บันทึก", "en": "Saved Auto and times unknown"},
+"เป้าหมาย ":{"th": "เป้าหมาย ", "en": "Target "},
+" · ใช้ล่าสุด ":{"th": " · ใช้ล่าสุด ", "en": " · Last applied "},
+"ปรับเอง":{"th": "ปรับเอง", "en": "Manual"},
+"กลางวัน":{"th": "กลางวัน", "en": "Day"},
+"กลางคืน":{"th": "กลางคืน", "en": "Night"},
+"รอนาฬิกา":{"th": "รอนาฬิกา", "en": "Waiting for clock"},
+"สถานะแสง: ไม่ทราบ":{"th": "สถานะแสง: ไม่ทราบ", "en": "Brightness status: Unknown"},
+"เวลาต้องเป็น HH:MM และไม่ซ้ำกัน":{"th": "เวลาต้องเป็น HH:MM และไม่ซ้ำกัน", "en": "Times must be distinct HH:MM values"},
+"โหมดที่บันทึก: ":{"th": "โหมดที่บันทึก: ", "en": "Saved mode: "},
+
+ "ความสว่าง":{"th":"ความสว่างฐาน","en":"Base brightness"},
  "ความสว่างที่บันทึก: ":{"th":"ความสว่างที่บันทึก: ","en":"Saved brightness: "},
  "ยังไม่ทราบความสว่างที่บันทึก":{"th":"ยังไม่ทราบความสว่างที่บันทึก","en":"Saved brightness unknown"},
  "Desk Duo setup": {
@@ -560,46 +585,89 @@ $('settings').addEventListener('submit',async e=>{
  }catch(err){put('status',()=>errorText(err));}
  finally{saving=false;$('settingsButton').disabled=!saved;}
 });load().catch(e=>put('status',()=>errorText(e)));
-let displayLoaded=false,displaySaved,displaySaving=false;
+let displayLoaded=false,displaySaved,displaySaving=false,displayInitialized=false;
+let displayEpoch=0,displayRequest,displayStatusKnown=false;
+const displayKeys=['codexUsageMode','language','brightnessPercent','brightnessAuto','brightnessDayStart','brightnessNightStart'];
+const editorValue=key=>key==='brightnessAuto'?$(key).checked:key==='brightnessPercent'?Number($(key).value):$(key).value;
+const validTime=value=>typeof value==='string' && /^(?:[01][0-9]|2[0-3]):[0-5][0-9]$/.test(value);
 $('displayButton').disabled=true;
-function displayReadback(current){
- if(!['both','weekly'].includes(current.codexUsageMode) || !['th','en'].includes(current.language) || !Number.isInteger(current.brightnessPercent) || current.brightnessPercent<5 || current.brightnessPercent>100)throw issue(()=>t("โหลดการแสดง usage ไม่สำเร็จ"));
- displaySaved=current;$('codexUsageMode').value=current.codexUsageMode;$('language').value=current.language;$('brightnessPercent').value=current.brightnessPercent;
- displayLoaded=true;$('displayButton').disabled=false;applyLanguage(current.language);languageReadback();
+function validDisplay(current){
+ return current && ['both','weekly'].includes(current.codexUsageMode) && ['th','en'].includes(current.language) && Number.isInteger(current.brightnessPercent) && current.brightnessPercent>=5 && current.brightnessPercent<=100 &&
+  typeof current.brightnessAuto==='boolean' && validTime(current.brightnessDayStart) && validTime(current.brightnessNightStart) && current.brightnessDayStart!==current.brightnessNightStart;
+}
+function displayReadback(current,baseline){
+ if(!validDisplay(current))throw issue(()=>t("โหลดการแสดง usage ไม่สำเร็จ"));
+ for(const key of displayKeys){
+  // A refresh can update a clean editor only. Recheck after awaiting GET so
+  // edits made while the request was in flight also survive.
+  if(!displayInitialized || (baseline && editorValue(key)===baseline[key])){
+   if(key==='brightnessAuto')$(key).checked=current[key];else $(key).value=current[key];
+  }
+ }
+ displaySaved=current;displayInitialized=true;displayLoaded=true;displayStatusKnown=true;
+ $('displayButton').disabled=displaySaving;applyLanguage($('language').value);languageReadback();
 }
 function languageReadback(){
  put('brightnessValue',()=>$('brightnessPercent').value+'%');
  put('brightnessStored',()=>displaySaved?t("ความสว่างที่บันทึก: ")+displaySaved.brightnessPercent+'%'+(Number($('brightnessPercent').value)!==displaySaved.brightnessPercent?t(" · ยังไม่ได้บันทึก"):""):t("ยังไม่ทราบความสว่างที่บันทึก"));
  put('languageStored',()=>displaySaved?t("ภาษาที่บันทึก: ")+t(displaySaved.language==='en'?"อังกฤษ / English":"ไทย / Thai")+($('language').value!==displaySaved.language?t(" · ยังไม่ได้บันทึก"):""):t("ยังไม่ทราบภาษาที่บันทึก"));
+ put('displayCurrent',()=>displaySaved?t('โหมดที่บันทึก: ')+t(displaySaved.codexUsageMode==='both'?'5h + Weekly':'Weekly อย่างเดียว'):t('ค่าปัจจุบัน: ไม่ทราบ (โหลดไม่สำเร็จ)'));
+ put('brightnessScheduleStored',()=>displaySaved?t('อัตโนมัติที่บันทึก: ')+t(displaySaved.brightnessAuto?'เปิด':'ปิด')+t(' · กลางวัน ')+displaySaved.brightnessDayStart+t(' · กลางคืน ')+displaySaved.brightnessNightStart+
+  (['brightnessAuto','brightnessDayStart','brightnessNightStart'].some(key=>editorValue(key)!==displaySaved[key])?t(' · ยังไม่ได้บันทึก'):''):t('ยังไม่ทราบเวลาที่บันทึก'));
+ put('brightnessEffective',()=>{
+  const state=displaySaved;
+  if(!state || !displayStatusKnown)return t('สถานะแสง: ไม่ทราบ');
+  const percent=value=>Number.isInteger(value)&&value>=5&&value<=100;
+  const phases={manual:'ปรับเอง',day:'กลางวัน',night:'กลางคืน',clock_wait:'รอนาฬิกา'};
+  return t('เป้าหมาย ')+(percent(state.brightnessTargetPercent)?state.brightnessTargetPercent+'%':t('ไม่ทราบ'))+t(' · ใช้ล่าสุด ')+(percent(state.brightnessEffectivePercent)?state.brightnessEffectivePercent+'%':t('ไม่ทราบ'))+' · '+(Object.hasOwn(phases,state.brightnessPhase)?t(phases[state.brightnessPhase]):t('ไม่ทราบ'));
+ });
 }
 async function loadDisplay(){
- const r=await fetch('/api/display',{cache:'no-store'});if(!r.ok)throw issue(()=>t("โหลดการแสดง usage ไม่สำเร็จ"));
- displayReadback(await r.json());
+ // Serialize GETs, including the authoritative read after POST. An older GET
+ // is allowed to finish but loses publication authority when a save starts.
+ if(displayRequest){try{await displayRequest;}catch(_){} }
+ if(displayRequest)return loadDisplay();
+ const epoch=displayEpoch,baseline=displaySaved;
+ const controller=new AbortController();const timeout=setTimeout(()=>controller.abort(),4000);
+ const request=(async()=>{
+  const r=await fetch('/api/display',{cache:'no-store',signal:controller.signal});
+  if(!r.ok)throw issue(()=>t('โหลดการแสดง usage ไม่สำเร็จ'));
+  const current=await r.json();if(epoch!==displayEpoch)return;
+  displayReadback(current,baseline);
+ })();
+ displayRequest=request;
+ try{await request;}finally{clearTimeout(timeout);if(displayRequest===request)displayRequest=undefined;}
 }
+async function refreshDisplay(){
+ if(displaySaving || displayRequest || document.hidden)return;
+ const epoch=displayEpoch;
+ try{await loadDisplay();if(epoch===displayEpoch && !displaySaving)put('displayStatus',()=>displayLoaded?'':t('โหลดการแสดง usage ไม่สำเร็จ'));}
+ catch(_){if(epoch===displayEpoch){displayStatusKnown=false;put('displayStatus',()=>t('โหลดการแสดง usage ไม่สำเร็จ'));languageReadback();}}
+}
+function pollDisplay(){setTimeout(async()=>{await refreshDisplay();pollDisplay();},15000);}
 $('brightnessPercent').addEventListener('input',languageReadback);
+for(const key of ['brightnessAuto','brightnessDayStart','brightnessNightStart','codexUsageMode'])$(key).addEventListener('change',languageReadback);
 $('language').addEventListener('change',()=>{applyLanguage($('language').value);languageReadback();});
 $('display').addEventListener('submit',async e=>{
  e.preventDefault();if(displaySaving)return;
  try{
   if(!displayLoaded)throw issue(()=>t("รอโหลดการแสดง usage"));
   const patch={};
-  if($('codexUsageMode').value!==displaySaved.codexUsageMode)patch.codexUsageMode=$('codexUsageMode').value;
-  if($('language').value!==displaySaved.language)patch.language=$('language').value;
-  const brightness=Number($('brightnessPercent').value);
-  if(!Number.isInteger(brightness)||brightness<5||brightness>100)throw issue(()=>t("โหลดการแสดง usage ไม่สำเร็จ"));
-  if(brightness!==displaySaved.brightnessPercent)patch.brightnessPercent=brightness;
+  const selected=Object.fromEntries(displayKeys.map(key=>[key,editorValue(key)]));
+  if(!validTime(selected.brightnessDayStart)||!validTime(selected.brightnessNightStart)||selected.brightnessDayStart===selected.brightnessNightStart)throw issue(()=>t('เวลาต้องเป็น HH:MM และไม่ซ้ำกัน'));
+  if(!validDisplay(selected))throw issue(()=>t('โหลดการแสดง usage ไม่สำเร็จ'));
+  for(const key of displayKeys)if(selected[key]!==displaySaved[key])patch[key]=selected[key];
   if(!Object.keys(patch).length){put('displayStatus',()=>t("ไม่มีการเปลี่ยนแปลง"));return;}
-  displaySaving=true;$('displayButton').disabled=true;put('displayStatus',()=>t("กำลังบันทึก..."));
+  ++displayEpoch;displaySaving=true;$('displayButton').disabled=true;put('displayStatus',()=>t("กำลังบันทึก..."));
   const r=await fetch('/api/display',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(patch)});
   if(!r.ok)throw issue(()=>r.status===503?t("ยังบันทึกไม่ได้ กรุณาลองอีกครั้ง"):t("ตรวจสอบค่า / สิทธิ์ (HTTP ")+r.status+')');
-  // An accepted POST makes the previous saved snapshot obsolete. Keep the
-  // selection/editors, but report saved language as unknown until readback.
   displayLoaded=false;displaySaved=undefined;languageReadback();
   try{await loadDisplay();}catch(_){put('displayStatus',()=>t("บันทึกแล้ว แต่โหลดการแสดงผลไม่สำเร็จ กรุณาโหลดหน้าใหม่"));return;}
   put('displayStatus',()=>t("บันทึกการแสดง usage แล้ว"));
  }catch(err){put('displayStatus',()=>errorText(err));}
  finally{displaySaving=false;$('displayButton').disabled=!displayLoaded;}
-});loadDisplay().catch(_=>{put('displayStatus',()=>t("โหลดการแสดง usage ไม่สำเร็จ"));languageReadback();});
+});
+loadDisplay().catch(_=>{put('displayStatus',()=>t("โหลดการแสดง usage ไม่สำเร็จ"));languageReadback();});pollDisplay();
 function selectedFile(){put('firmwareSelected',()=>$('firmwareFile').files?.[0]?.name||t("ยังไม่เลือกไฟล์"));}
 $('firmwareFile').addEventListener('change',selectedFile);selectedFile();
 let firmwareInfo;

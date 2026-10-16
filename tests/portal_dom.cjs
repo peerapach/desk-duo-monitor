@@ -13,7 +13,9 @@ async function open(options={}){
  const page=await browser.newPage({viewport:{width:options.width||720,height:1280}});
  await page.route('**/*',route=>route.abort());
  await page.evaluate(options=>{
-  window.scenario=options;window.posts=[];window.display={codexUsageMode:'weekly',language:options.language||'th',brightnessPercent:100,...options.display};window.displayLoads=0;
+  window.displayPollers=[];const nativeTimeout=window.setTimeout;
+  window.setTimeout=(fn,ms,...args)=>ms===15000?(displayPollers.push(fn),-displayPollers.length):nativeTimeout(fn,ms,...args);
+  window.scenario=options;window.posts=[];window.display={codexUsageMode:'weekly',language:options.language||'th',brightnessPercent:100,brightnessAuto:false,brightnessDayStart:'06:00',brightnessNightStart:'18:00',brightnessTargetPercent:100,brightnessEffectivePercent:null,brightnessPhase:'manual',...options.display};window.displayLoads=0;
   window.fetch=async(url,request={})=>{
    if(url==='/api/display'){
     if(request.method){const patch=JSON.parse(request.body);posts.push(patch);if(!scenario.saveFails)Object.assign(display,patch);return {ok:!scenario.saveFails,status:scenario.saveFails?503:204};}
@@ -35,7 +37,7 @@ async function open(options={}){
  await page.setContent(html);await page.waitForFunction(()=>document.getElementById('displayStatus').textContent || !document.getElementById('displayButton').disabled);
  return page;
 }
-test('actual portal DOM previews both languages, reads back independent saves, and preserves form data',async()=>{
+test('actual portal DOM previews both languages, reads back independent saves, and preserves form data',{timeout:30000},async()=>{
  const page=await open({language:'en'});
  assert.equal(await page.locator('html').getAttribute('lang'),'en');assert.equal(await page.title(),'Desk Duo setup');
  assert.equal(await page.locator('#language option[value=en]').textContent(),'English');
@@ -65,7 +67,7 @@ test('actual portal DOM previews both languages, reads back independent saves, a
  assert.deepEqual(await page.evaluate(()=>posts[1]),{codexUsageMode:'both'});assert.equal(await page.locator('#language').inputValue(),'th');
  await page.close();
 });
-test('actual DOM failed save/readback and config failure preserve honest saved-language status',async()=>{
+test('actual DOM failed save/readback and config failure preserve honest saved-language status',{timeout:30000},async()=>{
  const page=await open({saveFails:true,configFails:true});
  await page.locator('#language').selectOption('en');assert.equal(await page.locator('#settingsButton').isDisabled(),true);
  assert.match(await page.locator('#status').textContent(),/Could not load settings/);
@@ -88,7 +90,7 @@ test('actual DOM failed save/readback and config failure preserve honest saved-l
  await q.close();
 });
 
-test('actual brightness DOM: range endpoints, sparse/combined saves, narrow layout and locale preservation',async()=>{
+test('actual brightness DOM: range endpoints, sparse/combined saves, narrow layout and locale preservation',{timeout:30000},async()=>{
  for(const lang of ['en','th']){
   const page=await open({language:lang,width:320});
   const range=page.locator('#brightnessPercent');assert.equal(await range.getAttribute('min'),'5');assert.equal(await range.getAttribute('max'),'100');
@@ -112,7 +114,7 @@ test('actual brightness DOM: range endpoints, sparse/combined saves, narrow layo
   await page.screenshot({path:path.join(__dirname,'../.platformio/native-ui-regression/portal-brightness-'+lang+'-desktop.png')});await page.close();
  }
 });
-test('actual brightness DOM retains failed selection/saved value; validates readback before claiming current',async()=>{
+test('actual brightness DOM retains failed selection/saved value; validates readback before claiming current',{timeout:30000},async()=>{
  const p=await open({language:'en',saveFails:true});await p.locator('#brightnessPercent').fill('50');await p.locator('#brightnessPercent').dispatchEvent('input');await p.locator('#displayButton').click();await p.waitForFunction(()=>document.getElementById('displayStatus').textContent.includes('Could not save'));
  assert.match(await p.locator('#brightnessStored').textContent(),/100%.*Not saved/);assert.equal(await p.locator('#brightnessPercent').inputValue(),'50');await p.close();
  for(const display of [null,{brightnessPercent:undefined},{brightnessPercent:null},{brightnessPercent:true},{brightnessPercent:4},{brightnessPercent:101},{brightnessPercent:50.5},{brightnessPercent:'50'}]){
@@ -125,4 +127,46 @@ test('actual brightness DOM retains failed selection/saved value; validates read
   assert.equal(await q.locator('#brightnessStored').textContent(),'Saved brightness unknown');assert.equal(await q.locator('#languageStored').textContent(),'Saved language unknown');assert.equal(await q.locator('#displayButton').isDisabled(),true);
   assert.equal(await q.locator('#brightnessPercent').inputValue(),'5');assert.equal(await q.locator('#weatherLabel').inputValue(),'Unsaved user data');await q.close();
  }
+});
+
+test('actual Auto DOM keeps dirty editors and locale through status refresh; sparse save and both-language captures',{timeout:30000},async()=>{
+ for(const lang of ['en','th']){
+  const page=await open({language:lang,width:320,display:{brightnessAuto:true,brightnessPercent:51,brightnessTargetPercent:26,brightnessEffectivePercent:26,brightnessPhase:'night'}});
+  assert.equal(await page.locator('#brightnessAuto').isChecked(),true);assert.equal(await page.locator('#brightnessDayStart').getAttribute('type'),'time');assert.equal(await page.locator('#brightnessNightStart').getAttribute('step'),'60');
+  assert.match(await page.locator('#brightnessStored').textContent(),/51%/);assert.match(await page.locator('#brightnessEffective').textContent(),/26%.*26%/);
+  await page.locator('#display').scrollIntoViewIfNeeded();assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+  await page.screenshot({path:path.join(__dirname,'../.platformio/native-ui-regression/portal-auto-'+lang+'-320.png')});
+  await page.setViewportSize({width:900,height:1100});await page.locator('#display').scrollIntoViewIfNeeded();await page.screenshot({path:path.join(__dirname,'../.platformio/native-ui-regression/portal-auto-'+lang+'-desktop.png')});
+  await page.locator('#brightnessPercent').fill('11');await page.locator('#brightnessPercent').dispatchEvent('input');await page.locator('#brightnessDayStart').fill('07:15');await page.locator('#brightnessNightStart').fill('19:45');await page.locator('#brightnessAuto').uncheck();
+  const other=lang==='en'?'th':'en';await page.locator('#language').selectOption(other);await page.locator('#weatherLabel').fill('Keep กรุงเทพฯ');
+  await page.evaluate(async()=>{Object.assign(display,{brightnessPercent:75,brightnessTargetPercent:38,brightnessEffectivePercent:38,brightnessPhase:'night'});await displayPollers.shift()();});
+  assert.equal(await page.locator('#brightnessPercent').inputValue(),'11');assert.equal(await page.locator('#brightnessDayStart').inputValue(),'07:15');assert.equal(await page.locator('#brightnessNightStart').inputValue(),'19:45');assert.equal(await page.locator('#brightnessAuto').isChecked(),false);assert.equal(await page.locator('#language').inputValue(),other);assert.equal(await page.locator('html').getAttribute('lang'),other);assert.equal(await page.locator('#weatherLabel').inputValue(),'Keep กรุงเทพฯ');assert.deepEqual(await page.evaluate(()=>posts),[]);
+  assert.match(await page.locator('#brightnessStored').textContent(),/75%/);assert.match(await page.locator('#brightnessEffective').textContent(),/38%.*38%/);
+  await page.locator('#displayButton').click();await page.waitForFunction(()=>posts.length===1&&!document.getElementById('displayButton').disabled);
+  assert.deepEqual(await page.evaluate(()=>posts),[{language:other,brightnessPercent:11,brightnessAuto:false,brightnessDayStart:'07:15',brightnessNightStart:'19:45'}]);
+  await page.locator('#brightnessDayStart').fill('19:45');await page.locator('#displayButton').click();assert.equal(await page.evaluate(()=>posts.length),1);assert.match(await page.locator('#displayStatus').textContent(),/HH:MM/);
+  await page.close();
+ }
+});
+test('actual Auto DOM rejects stale GET after accepted POST, recovers unknown snapshot, and retains failed POST state',{timeout:30000},async()=>{
+ const page=await open({language:'en'});
+ await page.evaluate(()=>{
+  const previous=fetch;let delayed=true;
+  window.fetch=async(url,request={})=>{
+   if(url==='/api/display'&&!request.method&&delayed){delayed=false;const snapshot={...display};return await new Promise(resolve=>window.releaseDisplay=()=>resolve({ok:true,json:async()=>snapshot}));}
+   return previous(url,request);
+  };
+  window.polling=displayPollers.shift()();
+ });
+ await page.locator('#brightnessAuto').check();await page.locator('#brightnessPercent').fill('11');await page.locator('#brightnessPercent').dispatchEvent('input');
+ await page.locator('#displayButton').click();await page.waitForFunction(()=>document.getElementById('brightnessStored').textContent==='Saved brightness unknown');
+ await page.evaluate(()=>{scenario.reloadFails=true;releaseDisplay();});await page.waitForFunction(()=>document.getElementById('displayStatus').textContent.includes('readback failed'));
+ assert.equal(await page.locator('#brightnessStored').textContent(),'Saved brightness unknown');assert.equal(await page.locator('#displayButton').isDisabled(),true);assert.equal(await page.locator('#brightnessPercent').inputValue(),'11');assert.equal(await page.locator('#brightnessAuto').isChecked(),true);
+ await page.evaluate(async()=>{scenario.reloadFails=false;await displayPollers.shift()();});assert.match(await page.locator('#brightnessStored').textContent(),/11%/);assert.equal(await page.locator('#displayButton').isDisabled(),false);assert.match(await page.locator('#brightnessEffective').textContent(),/Last applied Unknown/);
+ await page.evaluate(()=>{scenario.saveFails=true;});await page.locator('#brightnessNightStart').fill('20:30');await page.locator('#displayButton').click();await page.waitForFunction(()=>document.getElementById('displayStatus').textContent.includes('Could not save'));
+ assert.match(await page.locator('#brightnessScheduleStored').textContent(),/18:00.*Not saved/);assert.equal(await page.locator('#brightnessNightStart').inputValue(),'20:30');
+ await page.evaluate(async()=>{scenario.reloadFails=true;await displayPollers.shift()();});assert.equal(await page.locator('#brightnessEffective').textContent(),'Brightness status: Unknown');
+ await page.locator('#brightnessPercent').fill('51');await page.locator('#brightnessPercent').dispatchEvent('input');assert.equal(await page.locator('#brightnessEffective').textContent(),'Brightness status: Unknown');
+ await page.locator('#language').selectOption('th');assert.match(await page.locator('#brightnessEffective').textContent(),/ไม่ทราบ/);
+ await page.evaluate(async()=>{scenario.reloadFails=false;await displayPollers.shift()();});assert.match(await page.locator('#brightnessEffective').textContent(),/100%/);assert.equal(await page.locator('#brightnessPercent').inputValue(),'51');await page.close();
 });

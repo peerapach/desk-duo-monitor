@@ -1,6 +1,7 @@
 #include "ui.hpp"
 #include "runtime.hpp"
 #include "backlight.hpp"
+#include "brightness_policy.hpp"
 #include "ota_policy.hpp"
 #include "network.hpp"
 #include "assets.hpp"
@@ -123,18 +124,27 @@ bool applyBrightness(uint8_t percent) {
 }
 void brightnessText() {
     if(!brightnessSlider)return;
-    text(brightnessLabel,std::string(tr("ความสว่าง ","Brightness "))+std::to_string(lv_slider_get_value(brightnessSlider))+"%");
+    auto preview=runtime_display_settings();
+    preview.brightnessPercent=static_cast<uint8_t>(lv_slider_get_value(brightnessSlider));
+    const auto plan=brightness_plan(preview,std::time(nullptr));
+    const auto applied=backlight_last_applied_percent();
+    const char* phase=tr("ปรับเอง","Manual");
+    if(plan.phase==BrightnessPhase::Day)phase=tr("อัตโนมัติ: กลางวัน","Auto: day");
+    else if(plan.phase==BrightnessPhase::Night)phase=tr("อัตโนมัติ: กลางคืน","Auto: night");
+    else if(plan.phase==BrightnessPhase::ClockWait)phase=tr("อัตโนมัติ: รอนาฬิกา","Auto: clock wait");
+    text(brightnessLabel,std::string(tr("ฐาน ","Base "))+std::to_string(preview.brightnessPercent)+
+        tr("% / ใช้ ","% / Applied ")+(applied?std::to_string(*applied)+"%":"--")+"\n"+phase);
     const char* status=brightnessState==BrightnessStatus::Preview?tr("ปล่อยเพื่อบันทึก","Release to save"):
         brightnessState==BrightnessStatus::SaveFailed?tr("บันทึกไม่สำเร็จ","Could not save"):
         brightnessState==BrightnessStatus::ApplyFailed?tr("ปรับแสงไม่สำเร็จ","Brightness failed"):tr("บันทึกแล้ว","Saved");
     text(brightnessStatus,status);
 }
 void cancelBrightness() {
-    const auto committed=runtime_display_settings().brightnessPercent;
-    if(brightnessPreview && !applyBrightness(committed))brightnessState=BrightnessStatus::ApplyFailed;
+    const auto committed=runtime_display_settings();
+    if(brightnessPreview && !applyBrightness(brightness_plan(committed,std::time(nullptr)).percent))brightnessState=BrightnessStatus::ApplyFailed;
     else if(brightnessPreview && !brightnessFailed)brightnessState=BrightnessStatus::Saved;
     brightnessPreview=false;brightnessFailed=false;
-    if(brightnessSlider) { lv_slider_set_value(brightnessSlider,committed,LV_ANIM_OFF);brightnessText(); }
+    if(brightnessSlider) { lv_slider_set_value(brightnessSlider,committed.brightnessPercent,LV_ANIM_OFF);brightnessText(); }
 }
 void brightnessEvent(lv_event_t* event) {
     const auto code=lv_event_get_code(event);
@@ -145,7 +155,9 @@ void brightnessEvent(lv_event_t* event) {
     if(code==LV_EVENT_PRESSED || code==LV_EVENT_VALUE_CHANGED) {
         if(!brightnessPreview){brightnessPreview=true;brightnessFailed=false;}
         if(!brightnessFailed) {
-            if(applyBrightness(lv_slider_get_value(brightnessSlider)))brightnessState=BrightnessStatus::Preview;
+            auto selected=runtime_display_settings();
+            selected.brightnessPercent=static_cast<uint8_t>(lv_slider_get_value(brightnessSlider));
+            if(applyBrightness(brightness_plan(selected,std::time(nullptr)).percent))brightnessState=BrightnessStatus::Preview;
             else {brightnessFailed=true;brightnessState=BrightnessStatus::ApplyFailed;}
         }
         brightnessText();
@@ -154,16 +166,20 @@ void brightnessEvent(lv_event_t* event) {
         const auto selected=static_cast<uint8_t>(lv_slider_get_value(brightnessSlider));
         if(!brightnessFailed) {
             MaintenanceLease lease(Maintenance::Settings);
-            if(!lease || runtime_display_patch("{\"brightnessPercent\":"+std::to_string(selected)+"}")!=204)
-                brightnessState=BrightnessStatus::SaveFailed;
-            else brightnessState=BrightnessStatus::Saved;
+            if(!lease)brightnessState=BrightnessStatus::SaveFailed;
+            else {
+                // Clock and committed schedule can change during a held drag.
+                // Apply the latest derived selection under the save's lease.
+                auto candidate=runtime_display_settings();candidate.brightnessPercent=selected;
+                if(!applyBrightness(brightness_plan(candidate,std::time(nullptr)).percent))brightnessState=BrightnessStatus::ApplyFailed;
+                else if(runtime_display_patch("{\"brightnessPercent\":"+std::to_string(selected)+"}")!=204)brightnessState=BrightnessStatus::SaveFailed;
+                else brightnessState=BrightnessStatus::Saved;
+            }
         }
-        // Restore the latest coherent committed level on every failure/cancel.
-        // A brightness-only patch merges concurrent language/mode updates.
-        const auto committed=runtime_display_settings().brightnessPercent;
-        if(!applyBrightness(committed))brightnessState=BrightnessStatus::ApplyFailed;
+        const auto committed=runtime_display_settings();
+        if(!applyBrightness(brightness_plan(committed,std::time(nullptr)).percent))brightnessState=BrightnessStatus::ApplyFailed;
         brightnessPreview=false;brightnessFailed=false;
-        lv_slider_set_value(brightnessSlider,committed,LV_ANIM_OFF);brightnessText();
+        lv_slider_set_value(brightnessSlider,committed.brightnessPercent,LV_ANIM_OFF);brightnessText();
     }
 }
 void navIcon(lv_event_t* event) {
@@ -344,7 +360,7 @@ void ui_tick() {
     }
     if(nextMode!=displayMode) { displayMode=nextMode; refreshed=0; }
     if(!brightnessPreview) {
-        if(!applyBrightness(preferences.brightnessPercent))brightnessState=BrightnessStatus::ApplyFailed;
+        if(!applyBrightness(brightness_plan(preferences,std::time(nullptr)).percent))brightnessState=BrightnessStatus::ApplyFailed;
         if(brightnessSlider) {lv_slider_set_value(brightnessSlider,preferences.brightnessPercent,LV_ANIM_OFF);brightnessText();}
     }
     const auto now=now_ms(); static uint64_t pressStart=0;

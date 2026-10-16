@@ -7,7 +7,7 @@ set(LV_CONF_BUILD_DISABLE_DEMOS ON CACHE BOOL "")
 set(LV_CONF_BUILD_DISABLE_EXAMPLES ON CACHE BOOL "")
 set(LV_CONF_BUILD_DISABLE_THORVG_INTERNAL ON CACHE BOOL "")
 add_subdirectory("${ROOT}/firmware/managed_components/lvgl__lvgl" lvgl)
-add_executable(preview preview.cpp "${ROOT}/firmware/main/ui.cpp" "${ROOT}/firmware/main/weather_view.cpp" "${ROOT}/firmware/main/assets.cpp" "${ROOT}/firmware/main/character_assets.cpp" "${ROOT}/firmware/main/fonts/ct_font_thai_12.c" "${ROOT}/firmware/main/fonts/ct_font_thai_14.c")
+add_executable(preview preview.cpp "${ROOT}/firmware/main/brightness_policy.cpp" "${ROOT}/firmware/main/ui.cpp" "${ROOT}/firmware/main/weather_view.cpp" "${ROOT}/firmware/main/assets.cpp" "${ROOT}/firmware/main/character_assets.cpp" "${ROOT}/firmware/main/fonts/ct_font_thai_12.c" "${ROOT}/firmware/main/fonts/ct_font_thai_14.c")
 target_include_directories(preview PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}" "${ROOT}/firmware/main" "${ROOT}/tests/backlight_sdk")
 target_link_libraries(preview PRIVATE lvgl)
 

@@ -16,6 +16,8 @@
 #include <limits>
 int buttonLevel=1;
 uint64_t clockMs=2000;
+std::time_t wallEpoch=-1;
+extern "C" std::time_t time(std::time_t* out) {timespec real{};clock_gettime(CLOCK_REALTIME,&real);auto result=wallEpoch<0?real.tv_sec:wallEpoch;if(out)*out=result;return result;}
 namespace deskduo {
 Config cfg;
 Snapshot data;
@@ -23,9 +25,12 @@ CodexUsageMode mode=CodexUsageMode::Both;
 Language language=Language::Thai;
 uint8_t brightness=100, hardwareBrightness=100;
 unsigned hardwareCalls=0, admissions=0, persistence=0;
-bool hardwareFail=false, saveFail=false;
+bool hardwareFail=false, saveFail=false, brightnessAuto=false;
+uint16_t brightnessDayStart=360,brightnessNightStart=1080;
+std::optional<uint8_t> backlight_last_applied_percent(){return hardwareBrightness;}
 std::vector<unsigned> hardwareLevels;
-esp_err_t display_set_brightness(uint8_t level){++hardwareCalls;hardwareLevels.push_back(level);if(hardwareFail)return ESP_FAIL;hardwareBrightness=level;return ESP_OK;}
+std::optional<uint8_t> failLevel;
+esp_err_t display_set_brightness(uint8_t level){++hardwareCalls;hardwareLevels.push_back(level);if(hardwareFail || (failLevel && *failLevel==level))return ESP_FAIL;hardwareBrightness=level;return ESP_OK;}
 int runtime_display_patch(const std::string& body){
  ++admissions;assert(!maintenance.acquire(Maintenance::Settings) && "local save must hold shared Settings lease");
  assert(body.find("language")==std::string::npos && body.find("codexUsageMode")==std::string::npos);
@@ -33,7 +38,7 @@ int runtime_display_patch(const std::string& body){
  auto start=body.find(':');assert(start!=std::string::npos);brightness=std::stoi(body.substr(start+1));++persistence;return 204;
 }
 Language runtime_language(){return language;}
-DisplaySettings runtime_display_settings(){return {mode,language,brightness};}
+DisplaySettings runtime_display_settings(){return {mode,language,brightness,brightnessAuto,brightnessDayStart,brightnessNightStart};}
 CodexUsageMode runtime_display_mode(){return mode;}
 uint64_t now_ms(){return clockMs;}
 RequestConfig runtime_config(){return {cfg,0};}
@@ -103,6 +108,46 @@ lv_obj_t* findSlider(lv_obj_t* parent){
  return nullptr;
 }
 void pointerAt(int x,int y,bool pressed){pointerX=x;pointerY=y;pointerState=pressed?LV_INDEV_STATE_PRESSED:LV_INDEV_STATE_RELEASED;clockMs+=20;lv_indev_read(fakePointer);if(pressed){clockMs+=20;lv_indev_read(fakePointer);}deskduo::ui_tick();}
+void autoBrightnessChecks(){
+ using namespace deskduo;
+ setenv("TZ","ICT-7",1);tzset();
+ auto clock=[](int hour,int minute=0){std::tm t{};t.tm_year=126;t.tm_mon=9;t.tm_mday=16;t.tm_hour=hour;t.tm_min=minute;wallEpoch=std::mktime(&t);};
+ brightnessAuto=true;brightness=51;language=Language::English;clock(12);ui_tick();tapTab("ตั้งค่า");
+ auto slider=[](){auto* s=findSlider(lv_screen_active());assert(s);return s;};
+ auto* existing=slider();auto saved=persistence;auto writes=admissions;
+ assert(hardwareBrightness==51);clock(18);ui_tick();assert(hardwareBrightness==26 && brightness==51 && persistence==saved && admissions==writes && slider()==existing);
+ clock(6);ui_tick();assert(hardwareBrightness==51 && brightness==51 && persistence==saved);
+ wallEpoch=0;ui_tick();assert(hardwareBrightness==51);clock(22);ui_tick();assert(hardwareBrightness==26 && persistence==saved);
+ assert(findLabel(lv_screen_active(),"Base 51% / Applied 26%\nAuto: night"));clockMs+=1000;capture("auto-brightness-setup-en.ppm");
+ lv_obj_update_layout(slider());lv_area_t b{};lv_obj_get_coords(slider(),&b);const int y=(b.y1+b.y2)/2;
+ auto press=[&](int x){pointerAt(x,y,true);};auto release=[&](int x){pointerAt(x,y,false);};
+ auto drag=[&](int x){press((b.x1+b.x2)/2);press(x);};
+ // Actual night drag previews the derived half. Clock/web ticks cannot stomp it.
+ drag(b.x2);assert(hardwareBrightness==50 && brightness==51 && persistence==saved);
+ brightness=25;brightnessDayStart=1200;brightnessNightStart=360;ui_tick();assert(hardwareBrightness==50);
+ release(b.x2);assert(brightness==100 && brightnessAuto && brightnessDayStart==1200 && brightnessNightStart==360 && hardwareBrightness==100 && persistence==saved+1 && admissions==writes+1);
+ saved=persistence;writes=admissions;brightnessDayStart=360;brightnessNightStart=1080;brightness=51;clock(17,59);ui_tick();
+ drag(b.x2);assert(hardwareBrightness==100);clock(18);ui_tick();assert(hardwareBrightness==100 && persistence==saved);release(b.x2);
+ assert(hardwareBrightness==50 && brightness==100 && persistence==saved+1 && admissions==writes+1);
+ saved=persistence;writes=admissions;brightness=51;ui_tick();
+ // At a held boundary the required release application must succeed before save.
+ clock(17,59);ui_tick();drag(b.x2);clock(18);failLevel=50;release(b.x2);failLevel.reset();
+ assert(brightness==51 && hardwareBrightness==26 && persistence==saved && admissions==writes && findLabel(lv_screen_active(),"Brightness failed"));
+ // Latest derived committed state is restored by all existing cancellation paths.
+ drag(b.x1);brightness=75;lv_indev_reset(fakePointer,slider());release(b.x1);assert(hardwareBrightness==38 && brightness==75 && persistence==saved);
+ drag(b.x1);brightness=99;lv_indev_wait_release(fakePointer);release(b.x1);assert(hardwareBrightness==50 && persistence==saved);
+ drag(b.x1);brightness=51;tapTab("คู่หู");release(b.x1);assert(hardwareBrightness==26 && !findSlider(lv_screen_active()) && persistence==saved);
+ tapTab("ตั้งค่า");drag(b.x1);brightness=75;language=Language::Thai;ui_tick();release(b.x1);assert(hardwareBrightness==38 && persistence==saved);clockMs+=1000;capture("auto-brightness-setup-th.ppm");
+ language=Language::English;ui_tick();drag(b.x1);brightness=51;buttonLevel=0;ui_tick();clockMs+=100;buttonLevel=1;ui_tick();release(b.x1);assert(hardwareBrightness==26 && !findSlider(lv_screen_active()) && persistence==saved);
+ tapTab("ตั้งค่า");assert(maintenance.acquire(Maintenance::Update));drag(b.x1);release(b.x1);maintenance.release();assert(hardwareBrightness==26 && persistence==saved && admissions==writes);
+ saveFail=true;drag(b.x2);release(b.x2);saveFail=false;assert(hardwareBrightness==26 && brightness==51 && persistence==saved && admissions==writes+1);
+ writes=admissions;hardwareFail=true;drag(b.x1);release(b.x1);hardwareFail=false;ui_tick();assert(hardwareBrightness==26 && persistence==saved && admissions==writes);
+ brightness=99;hardwareFail=true;ui_tick();assert(hardwareBrightness==26 && backlight_last_applied_percent()==26);hardwareFail=false;ui_tick();assert(hardwareBrightness==50 && backlight_last_applied_percent()==50 && persistence==saved);
+ // Unknown/recovered/jumping clocks do not mutate the saved base or use NVS.
+ for(int hour:{6,18,5,12,22}){clock(hour);ui_tick();assert(brightness==99 && persistence==saved && admissions==writes);}
+ brightnessAuto=false;brightnessDayStart=360;brightnessNightStart=1080;brightness=100;wallEpoch=-1;ui_tick();tapTab("คู่หู");
+ std::cout<<"Auto brightness actual LVGL pointer/clock: ticks, NTP, no writes/rebuild, night preview, concurrent schedule, held boundary success/failure, latest derived reset/lost/page/language/BOOT, busy/save/apply failure passed\n";
+}
 void brightnessChecks(){
  using namespace deskduo;
  language=Language::English;brightness=50;ui_tick();tapTab("ตั้งค่า");
@@ -156,8 +201,20 @@ void brightnessChecks(){
 
 // These tests catch fabricated missing readings, wrong WMO branches, text
 // clipping, misplaced chart annotations, and stale pointers after rebuilds.
+lv_obj_t* actualContentRoot(){
+    auto* screen=lv_screen_active();lv_obj_update_layout(screen);
+    lv_obj_t* root=nullptr;unsigned matches=0;
+    for(uint32_t i=0;i<lv_obj_get_child_count(screen);++i){
+        auto* child=lv_obj_get_child(screen,i);
+        if(lv_obj_get_x(child)==0 && lv_obj_get_y(child)==24 && lv_obj_get_width(child)==240 && lv_obj_get_height(child)==232){root=child;++matches;}
+    }
+    assert(matches==1 && "actual UI content viewport must exist uniquely");return root;
+}
+lv_obj_t* findWeatherLabel(const char* value){
+    return findLabel(actualContentRoot(),deskduo::shapeText(value).c_str());
+}
 lv_obj_t* weatherLabel(const char* value){
-    auto* obj=findLabel(lv_screen_active(),deskduo::shapeText(value).c_str());
+    auto* obj=findWeatherLabel(value);
     if(!obj)std::cerr<<"Missing weather label: "<<value<<"\n";
     assert(obj && "weather reading must appear on actual LVGL page");
     return obj;
@@ -171,6 +228,7 @@ void assertTextFits(lv_obj_t* obj){
     assert(natural.y<=lv_obj_get_style_text_font(obj,0)->line_height &&
            lv_obj_get_height(obj)<=lv_obj_get_style_text_font(obj,0)->line_height && "weather reading must stay on one baseline");
     lv_area_t box{};lv_obj_get_coords(obj,&box);
+    if(!(box.x1>=0 && box.x2<240 && box.y1>=24 && box.y2<256))std::cerr<<"Out of bounds "<<lv_label_get_text(obj)<<" "<<box.x1<<","<<box.y1<<","<<box.x2<<","<<box.y2<<"\n";
     assert(box.x1>=0 && box.x2<240 && box.y1>=24 && box.y2<256);
 }
 // Thai fallback has a taller line box. Verify actual glyph ink stays above
@@ -203,6 +261,9 @@ bool mintNear(int x,int y){
     return false;
 }
 void weatherChecks(){
+    const auto savedWallEpoch=wallEpoch;
+    std::tm collisionTime{};collisionTime.tm_year=126;collisionTime.tm_mon=9;collisionTime.tm_mday=16;collisionTime.tm_hour=14;
+    wallEpoch=std::mktime(&collisionTime);clockMs+=1000;
     auto& data=deskduo::data;
     const auto originalWeather=data.weather;
     deskduo::language=deskduo::Language::Thai;deskduo::ui_tick();
@@ -216,6 +277,9 @@ void weatherChecks(){
     auto* content=lv_obj_get_parent(temperature);
     assert(lv_obj_get_y(content)==24 && lv_obj_get_height(content)==232);
     assert(!lv_obj_has_flag(content,LV_OBJ_FLAG_SCROLLABLE));
+    auto* headerClock=findLabel(lv_screen_active(),"14:00");
+    assert(headerClock && lv_obj_get_parent(headerClock)==lv_screen_active() && lv_obj_get_x(headerClock)==185 && lv_obj_get_y(headerClock)==3);
+    assert(weatherLabel("14:00")!=headerClock && "forecast lookup must distinguish duplicate header clock text");
     const char* times[]={"14:00","15:00","16:00","17:00"};
     const char* readings[]={"32.0°","33.0°","34.0°","35.0°"};
     for(int k=0;k<4;++k){
@@ -283,20 +347,22 @@ void weatherChecks(){
     data.weather.data->hourlyRainProbability[0].reset();clockMs+=1000;deskduo::ui_tick();
     assert(mintNear(39,210)); // Missing rain never invalidates a known temperature.
     data.weather.data->hourlyCount=3;clockMs+=1000;capture("weather-count-three.ppm");
-    assert(!findLabel(lv_screen_active(),"17:00") && !mintNear(201,210));
+    assert(!findWeatherLabel("17:00") && !mintNear(201,210));
     data.weather.data->hourlyCount=4;data.weather.data->hourlyTemperatures[1].reset();
     data.weather.data->hourlyTimes[3].reset();
     clockMs+=1000;capture("weather-sparse.ppm");
-    assert(!findLabel(lv_screen_active(),"15:00") && findLabel(lv_screen_active(),"16:00") && !findLabel(lv_screen_active(),"17:00"));
+    assert(!findWeatherLabel("15:00") && findWeatherLabel("16:00") && !findWeatherLabel("17:00"));
     assert(mintNear(39,210) && mintNear(147,210));
     assert(!mintNear(66,210) && !mintNear(120,210) && "sparse plot must not bridge a missing slot");
     assert(!mintNear(93,210) && !mintNear(201,210));
     data.weather.data->hourlyCount=0;clockMs+=1000;capture("weather-count-zero.ppm");
-    assert(!findLabel(lv_screen_active(),"14:00") && !findLabel(lv_screen_active(),"16:00"));
+    auto* zeroCountHeader=findLabel(lv_screen_active(),"14:00");
+    assert(zeroCountHeader && lv_obj_get_parent(zeroCountHeader)==lv_screen_active() && "header remains while forecast count is zero");
+    assert(!findWeatherLabel("14:00") && !findWeatherLabel("16:00"));
     assert(!mintNear(39,210) && !mintNear(147,210));
     data.weather.unknown=true;clockMs+=1000;capture("weather-unknown.ppm");
-    weatherLabel("ยังไม่มีข้อมูล");assert(!findLabel(lv_screen_active(),"0.0"));
-    assert(!findLabel(lv_screen_active(),"14:00"));assert(regionHash(162,68,65,65)==icons[8]);
+    weatherLabel("ยังไม่มีข้อมูล");assert(!findWeatherLabel("0.0"));
+    assert(!findWeatherLabel("14:00"));assert(regionHash(162,68,65,65)==icons[8]);
     const auto retained=data.weather.data;data.weather.data.reset();data.weather.unknown=false;
     clockMs+=1000;capture("weather-no-data.ppm");weatherLabel("ยังไม่มีข้อมูล");
     assert(regionHash(162,68,65,65)==icons[8]);data.weather.data=retained;
@@ -352,7 +418,7 @@ void weatherChecks(){
     }
     data.weather.data->hourlyTimes[1].reset();
     clockMs+=1000;capture("weather-timezone-missing-timestamp.ppm");
-    assert(!findLabel(lv_screen_active(),"22:30"));
+    assert(!findWeatherLabel("22:30"));
     assert(!mintNear(93,213));
     data.weather.data->hourlyTimes[1]=1791165600;
     data.weather.data->utcOffsetSeconds.reset();
@@ -369,6 +435,7 @@ void weatherChecks(){
     assert(mintNear(39,220) && mintNear(93,213) && mintNear(147,207) && mintNear(201,200));
     data.weather=originalWeather;data.weatherLabel="กรุงเทพฯ";
     clockMs+=1000;deskduo::ui_tick();
+    wallEpoch=savedWallEpoch;clockMs+=1000;deskduo::ui_tick();
     std::cout<<"Weather source-timezone: positive/negative/fractional/UTC0, midnight rollover, missing timestamp/offset, unchanged Bangkok device zone passed\n";
     std::cout<<"Calm weather: fresh/unknown/sparse/zero/flat/stale, exact WMO groups, native font bounds, long Thai, signed extremes, and 40 rebuild cycles passed\n";
 }
@@ -650,6 +717,7 @@ int main(){
     lv_mem_monitor(&after);
     assert(after.free_size+512>=before.free_size && "repeated setup reveal/navigation must not leak LVGL heap");
     capture("navigation-cycled.ppm");
+    autoBrightnessChecks();
     brightnessChecks();
     languageChecks();
     std::cout<<"Setup token rotation, reflow, close/reopen checks passed; ";
