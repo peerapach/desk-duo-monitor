@@ -1,5 +1,7 @@
 #include "ui.hpp"
 #include "runtime.hpp"
+#include "backlight.hpp"
+#include "ota_policy.hpp"
 #include "network.hpp"
 #include "assets.hpp"
 #include "character_assets.hpp"
@@ -27,6 +29,11 @@ int page=0;
 bool setup=false;
 CodexUsageMode displayMode=CodexUsageMode::Both;
 Language language=Language::Thai;
+lv_obj_t *brightnessSlider=nullptr, *brightnessLabel=nullptr, *brightnessStatus=nullptr;
+bool brightnessPreview=false, brightnessFailed=false;
+int appliedBrightness=-1;
+enum class BrightnessStatus { Saved, Preview, SaveFailed, ApplyFailed };
+BrightnessStatus brightnessState=BrightnessStatus::Saved;
 const char* tr(const char* thai,const char* english) { return language==Language::English?english:thai; }
 uint64_t rotated=0, refreshed=0, holdUntil=0;
 lv_obj_t* label(lv_obj_t* parent,int x,int y,int width,const std::string& value,bool large=false) {
@@ -109,6 +116,56 @@ std::string tokenLines(const std::string& token) {
     for(std::size_t i=0;i<token.size();i+=16) { if(i)lines+='\n'; lines+=token.substr(i,16); }
     return lines;
 }
+bool applyBrightness(uint8_t percent) {
+    if(appliedBrightness==percent)return true;
+    if(display_set_brightness(percent)!=ESP_OK)return false;
+    appliedBrightness=percent;return true;
+}
+void brightnessText() {
+    if(!brightnessSlider)return;
+    text(brightnessLabel,std::string(tr("ความสว่าง ","Brightness "))+std::to_string(lv_slider_get_value(brightnessSlider))+"%");
+    const char* status=brightnessState==BrightnessStatus::Preview?tr("ปล่อยเพื่อบันทึก","Release to save"):
+        brightnessState==BrightnessStatus::SaveFailed?tr("บันทึกไม่สำเร็จ","Could not save"):
+        brightnessState==BrightnessStatus::ApplyFailed?tr("ปรับแสงไม่สำเร็จ","Brightness failed"):tr("บันทึกแล้ว","Saved");
+    text(brightnessStatus,status);
+}
+void cancelBrightness() {
+    const auto committed=runtime_display_settings().brightnessPercent;
+    if(brightnessPreview && !applyBrightness(committed))brightnessState=BrightnessStatus::ApplyFailed;
+    else if(brightnessPreview && !brightnessFailed)brightnessState=BrightnessStatus::Saved;
+    brightnessPreview=false;brightnessFailed=false;
+    if(brightnessSlider) { lv_slider_set_value(brightnessSlider,committed,LV_ANIM_OFF);brightnessText(); }
+}
+void brightnessEvent(lv_event_t* event) {
+    const auto code=lv_event_get_code(event);
+    if(code==LV_EVENT_INDEV_RESET) {if(brightnessPreview)cancelBrightness();return;}
+    if(code!=LV_EVENT_PRESSED && code!=LV_EVENT_VALUE_CHANGED && code!=LV_EVENT_PRESS_LOST && code!=LV_EVENT_RELEASED)return;
+    // LVGL's slider class can re-enable scroll chaining on release/resize.
+    lv_obj_remove_flag(brightnessSlider,static_cast<lv_obj_flag_t>(LV_OBJ_FLAG_SCROLL_CHAIN|LV_OBJ_FLAG_GESTURE_BUBBLE));
+    if(code==LV_EVENT_PRESSED || code==LV_EVENT_VALUE_CHANGED) {
+        if(!brightnessPreview){brightnessPreview=true;brightnessFailed=false;}
+        if(!brightnessFailed) {
+            if(applyBrightness(lv_slider_get_value(brightnessSlider)))brightnessState=BrightnessStatus::Preview;
+            else {brightnessFailed=true;brightnessState=BrightnessStatus::ApplyFailed;}
+        }
+        brightnessText();
+    } else if(code==LV_EVENT_PRESS_LOST)cancelBrightness();
+    else if(code==LV_EVENT_RELEASED && brightnessPreview) {
+        const auto selected=static_cast<uint8_t>(lv_slider_get_value(brightnessSlider));
+        if(!brightnessFailed) {
+            MaintenanceLease lease(Maintenance::Settings);
+            if(!lease || runtime_display_patch("{\"brightnessPercent\":"+std::to_string(selected)+"}")!=204)
+                brightnessState=BrightnessStatus::SaveFailed;
+            else brightnessState=BrightnessStatus::Saved;
+        }
+        // Restore the latest coherent committed level on every failure/cancel.
+        // A brightness-only patch merges concurrent language/mode updates.
+        const auto committed=runtime_display_settings().brightnessPercent;
+        if(!applyBrightness(committed))brightnessState=BrightnessStatus::ApplyFailed;
+        brightnessPreview=false;brightnessFailed=false;
+        lv_slider_set_value(brightnessSlider,committed,LV_ANIM_OFF);brightnessText();
+    }
+}
 void navIcon(lv_event_t* event) {
     auto* obj=static_cast<lv_obj_t*>(lv_event_get_target(event));
     const int tab=reinterpret_cast<uintptr_t>(lv_event_get_user_data(event));
@@ -130,6 +187,8 @@ void navIcon(lv_event_t* event) {
     if(selected) box(14,41,32,2,1,true);
 }
 void buildPage() {
+    cancelBrightness();
+    brightnessSlider=brightnessLabel=brightnessStatus=nullptr;
     weather_view_reset();
     if(content) lv_obj_delete(content);
     content=lv_obj_create(screen); lv_obj_remove_style_all(content);
@@ -150,15 +209,31 @@ void buildPage() {
     if(setup) {
         auto cfg=runtime_config().config;
         label(content,10,4,220,tr("ตั้งค่า Desk Duo","Desk Duo setup"));
-        label(content,10,32,220,ap_name());
-        label(content,10,56,220,std::string(tr("AP / ผู้ดูแล: ","AP / admin: "))+cfg.setupPassword);
-        label(content,10,82,220,"http://192.168.4.1");
-        values[0]=label(content,10,107,220,"LAN: "+station_address());
-        label(content,10,133,220,tr("โทเค็นส่งข้อมูล:","Usage bearer token:"));
+        brightnessLabel=label(content,10,29,220,"");
+        brightnessSlider=lv_slider_create(content);lv_obj_remove_style_all(brightnessSlider);
+        lv_obj_set_pos(brightnessSlider,20,70);lv_obj_set_size(brightnessSlider,200,4);
+        lv_obj_set_ext_click_area(brightnessSlider,20);
+        lv_slider_set_range(brightnessSlider,5,100);
+        lv_slider_set_value(brightnessSlider,runtime_display_settings().brightnessPercent,LV_ANIM_OFF);
+        for(auto part:{LV_PART_MAIN,LV_PART_INDICATOR,LV_PART_KNOB}) {
+            lv_obj_set_style_bg_color(brightnessSlider,lv_color_hex(part==LV_PART_MAIN?line:part==LV_PART_KNOB?ink:mint),part);
+            lv_obj_set_style_bg_opa(brightnessSlider,LV_OPA_COVER,part);
+            lv_obj_set_style_radius(brightnessSlider,8,part);
+        }
+        lv_obj_set_style_pad_all(brightnessSlider,5,LV_PART_KNOB);
+        lv_obj_remove_flag(brightnessSlider,static_cast<lv_obj_flag_t>(LV_OBJ_FLAG_SCROLL_CHAIN|LV_OBJ_FLAG_GESTURE_BUBBLE|LV_OBJ_FLAG_SCROLL_ON_FOCUS));
+        lv_obj_add_flag(brightnessSlider,LV_OBJ_FLAG_PRESS_LOCK);
+        lv_obj_add_event_cb(brightnessSlider,brightnessEvent,LV_EVENT_ALL,nullptr);
+        brightnessStatus=label(content,10,96,220,"");brightnessText();
+        label(content,10,123,220,ap_name());
+        label(content,10,147,220,std::string(tr("AP / ผู้ดูแล: ","AP / admin: "))+cfg.setupPassword);
+        label(content,10,173,220,"http://192.168.4.1");
+        values[0]=label(content,10,198,220,"LAN: "+station_address());
+        label(content,10,224,220,tr("โทเค็นส่งข้อมูล:","Usage bearer token:"));
         // Credentials exist only while an explicit local reveal is open.
-        values[1]=metric(10,157,220,tokenLines(cfg.usageToken));
+        values[1]=metric(10,248,220,tokenLines(cfg.usageToken));
         lv_label_set_long_mode(values[1],LV_LABEL_LONG_WRAP); lv_obj_update_layout(values[1]);
-        values[2]=label(content,10,167+lv_obj_get_height(values[1]),220,tr("BOOT: กลับ / เปิดตั้งค่า","BOOT: return / setup"));
+        values[2]=label(content,10,258+lv_obj_get_height(values[1]),220,tr("BOOT: กลับ / เปิดตั้งค่า","BOOT: return / setup"));
         lv_obj_add_flag(content,LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_set_scroll_dir(content,LV_DIR_VER);
         lv_obj_set_scrollbar_mode(content,LV_SCROLLBAR_MODE_AUTO);
@@ -268,6 +343,10 @@ void ui_tick() {
         language=preferences.language;refreshed=0;buildPage();
     }
     if(nextMode!=displayMode) { displayMode=nextMode; refreshed=0; }
+    if(!brightnessPreview) {
+        if(!applyBrightness(preferences.brightnessPercent))brightnessState=BrightnessStatus::ApplyFailed;
+        if(brightnessSlider) {lv_slider_set_value(brightnessSlider,preferences.brightnessPercent,LV_ANIM_OFF);brightnessText();}
+    }
     const auto now=now_ms(); static uint64_t pressStart=0;
     if(!gpio_get_level(GPIO_NUM_0)) { if(!pressStart)pressStart=now; }
     else if(pressStart) { if(now-pressStart>=80)switchPage(page,true,!setup); pressStart=0; }
@@ -285,7 +364,7 @@ void ui_tick() {
     if(setup) {
         text(values[0],"LAN: "+station_address());
         text(values[1],tokenLines(runtime_config().config.usageToken)); lv_obj_update_layout(values[1]);
-        lv_obj_set_y(values[2],167+lv_obj_get_height(values[1])); return;
+        lv_obj_set_y(values[2],258+lv_obj_get_height(values[1])); return;
     }
     if(page==0) {
         for(int p=0;p<2;++p) {

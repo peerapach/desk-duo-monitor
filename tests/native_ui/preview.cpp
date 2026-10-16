@@ -3,6 +3,8 @@
 #include "ui.hpp"
 #include "runtime.hpp"
 #include "assets.hpp"
+#include "backlight.hpp"
+#include "ota_policy.hpp"
 #include "fonts/ct_font_thai.h"
 #include <cassert>
 #include <fstream>
@@ -19,8 +21,19 @@ Config cfg;
 Snapshot data;
 CodexUsageMode mode=CodexUsageMode::Both;
 Language language=Language::Thai;
+uint8_t brightness=100, hardwareBrightness=100;
+unsigned hardwareCalls=0, admissions=0, persistence=0;
+bool hardwareFail=false, saveFail=false;
+std::vector<unsigned> hardwareLevels;
+esp_err_t display_set_brightness(uint8_t level){++hardwareCalls;hardwareLevels.push_back(level);if(hardwareFail)return ESP_FAIL;hardwareBrightness=level;return ESP_OK;}
+int runtime_display_patch(const std::string& body){
+ ++admissions;assert(!maintenance.acquire(Maintenance::Settings) && "local save must hold shared Settings lease");
+ assert(body.find("language")==std::string::npos && body.find("codexUsageMode")==std::string::npos);
+ if(saveFail)return 503;
+ auto start=body.find(':');assert(start!=std::string::npos);brightness=std::stoi(body.substr(start+1));++persistence;return 204;
+}
 Language runtime_language(){return language;}
-DisplaySettings runtime_display_settings(){return {mode,language};}
+DisplaySettings runtime_display_settings(){return {mode,language,brightness};}
 CodexUsageMode runtime_display_mode(){return mode;}
 uint64_t now_ms(){return clockMs;}
 RequestConfig runtime_config(){return {cfg,0};}
@@ -83,6 +96,64 @@ void pointerTapAt(int x,int y){
     pointerState=LV_INDEV_STATE_RELEASED; lv_indev_read(fakePointer);
     deskduo::ui_tick();
 }
+
+lv_obj_t* findSlider(lv_obj_t* parent){
+ if(lv_obj_check_type(parent,&lv_slider_class))return parent;
+ for(uint32_t i=0;i<lv_obj_get_child_count(parent);++i)if(auto* match=findSlider(lv_obj_get_child(parent,i)))return match;
+ return nullptr;
+}
+void pointerAt(int x,int y,bool pressed){pointerX=x;pointerY=y;pointerState=pressed?LV_INDEV_STATE_PRESSED:LV_INDEV_STATE_RELEASED;clockMs+=20;lv_indev_read(fakePointer);if(pressed){clockMs+=20;lv_indev_read(fakePointer);}deskduo::ui_tick();}
+void brightnessChecks(){
+ using namespace deskduo;
+ language=Language::English;brightness=50;ui_tick();tapTab("ตั้งค่า");
+ auto slider=[](){auto* s=findSlider(lv_screen_active());assert(s && "Setup needs real brightness slider");return s;};
+ auto* s=slider();lv_obj_update_layout(s);lv_area_t b{};lv_obj_get_coords(s,&b);
+ assert(b.y1-20>=24 && b.y2+20<180 && b.y2-b.y1+1+40>=44);
+ assert(hardwareBrightness==50);auto calls=hardwareCalls;ui_tick();ui_tick();assert(hardwareCalls==calls);
+ const int y=(b.y1+b.y2)/2;
+ auto press=[&](int x,int yy){pointerAt(x,yy,true);};auto release=[&](int x,int yy){pointerAt(x,yy,false);};
+ auto drag=[&](int x){press((b.x1+b.x2)/2,y);press(x,y);};
+ auto saved=persistence;auto admitted=admissions;
+ // Both halves of the padded target belong to the slider, including vertical
+ // motion outside its thin track; the scrollable credential viewport stays put.
+ press((b.x1+b.x2)/2,y-18);press(b.x1,y);press(b.x1,y+60);
+ assert(hardwareBrightness==5 && persistence==saved && admissions==admitted && lv_obj_get_scroll_y(lv_obj_get_parent(s))==0);
+ release(b.x1,y+60);assert(persistence==saved+1 && admissions==admitted+1);
+ saved=persistence;admitted=admissions;
+ press(b.x1,y+18);assert(persistence==saved);press((b.x1+b.x2)/2,y);assert(persistence==saved);assert(hardwareBrightness>=49 && hardwareBrightness<=54);
+ press(b.x2,y);assert(hardwareBrightness==100 && persistence==saved);press(b.x1,y);assert(hardwareBrightness==5 && persistence==saved);
+ assert(findLabel(lv_screen_active(),"Desk Duo setup"));assert(lv_obj_get_scroll_y(lv_obj_get_parent(s))==0);
+ release(b.x1,y);assert(persistence==saved+1 && admissions==admitted+1 && brightness==5);
+ capture("brightness-setup-en.ppm");
+ // Saved web changes reach the same hardware without any navigation rebuild.
+ auto* existing=slider();brightness=50;ui_tick();assert(slider()==existing && hardwareBrightness==50 && lv_slider_get_value(existing)==50);
+ // A drag must not be overwritten by web updates; release merges only brightness.
+ drag(b.x2);assert(lv_slider_get_value(slider())==100 && hardwareBrightness==100 && persistence==saved+1 && admissions==admitted+1);brightness=25;mode=CodexUsageMode::Weekly;ui_tick();assert(hardwareBrightness==100);release(b.x2,y);assert(brightness==100 && mode==CodexUsageMode::Weekly);
+ saved=persistence;admitted=admissions;
+ unsigned resetEvents=0,lostEvents=0;
+ lv_obj_add_event_cb(slider(),[](lv_event_t* e){++*static_cast<unsigned*>(lv_event_get_user_data(e));},LV_EVENT_INDEV_RESET,&resetEvents);
+ lv_obj_add_event_cb(slider(),[](lv_event_t* e){++*static_cast<unsigned*>(lv_event_get_user_data(e));},LV_EVENT_PRESS_LOST,&lostEvents);
+ drag(b.x1);assert(hardwareBrightness==5);brightness=50;lv_indev_reset(fakePointer,slider());release(b.x1,y);
+ assert(resetEvents==1 && lostEvents==0 && persistence==saved && admissions==admitted && hardwareBrightness==50 && lv_slider_get_value(slider())==50);
+ drag(b.x1);assert(hardwareBrightness==5);brightness=75;lv_indev_wait_release(fakePointer);release(b.x1,y);
+ assert(lostEvents==1 && persistence==saved && admissions==admitted && hardwareBrightness==75 && lv_slider_get_value(slider())==75);
+ brightness=50;ui_tick();assert(hardwareBrightness==50 && lv_slider_get_value(slider())==50);
+ drag(b.x1);assert(hardwareBrightness==5);tapTab("คู่หู");release(b.x1,y);assert(persistence==saved && hardwareBrightness==50 && !findSlider(lv_screen_active()));
+ tapTab("ตั้งค่า");s=slider();drag(b.x1);assert(hardwareBrightness==5);language=Language::Thai;ui_tick();release(b.x1,y);assert(persistence==saved && hardwareBrightness==50);capture("brightness-setup-th.ppm");
+ language=Language::English;ui_tick();drag(b.x1);assert(hardwareBrightness==5);buttonLevel=0;ui_tick();clockMs+=100;buttonLevel=1;ui_tick();release(b.x1,y);assert(persistence==saved && hardwareBrightness==50 && !findSlider(lv_screen_active()));
+ tapTab("ตั้งค่า");assert(maintenance.acquire(Maintenance::Update));admitted=admissions;drag(b.x1);release(b.x1,y);maintenance.release();assert(persistence==saved && admissions==admitted && hardwareBrightness==50);assert(findLabel(lv_screen_active(),"Could not save"));
+ saveFail=true;admitted=admissions;drag(b.x1);release(b.x1,y);saveFail=false;assert(admissions==admitted+1 && persistence==saved && hardwareBrightness==50);assert(findLabel(lv_screen_active(),"Could not save"));
+ hardwareFail=true;admitted=admissions;drag(b.x1);release(b.x1,y);hardwareFail=false;ui_tick();assert(persistence==saved && admissions==admitted && hardwareBrightness==50);assert(findLabel(lv_screen_active(),"Brightness failed"));
+ // Failed committed apply is retried; successful applications alone are cached.
+ brightness=25;hardwareFail=true;calls=hardwareCalls;ui_tick();assert(hardwareCalls>calls && hardwareBrightness==50);hardwareFail=false;ui_tick();assert(hardwareBrightness==25);
+ // Bounded repeated rebuilds while previewing cannot retain widgets or persist.
+ lv_mem_monitor_t before{},after{};lv_mem_monitor(&before);
+ for(int i=0;i<40;++i){drag(b.x1);language=i%2?Language::English:Language::Thai;ui_tick();release(b.x1,y);tapTab("คู่หู");tapTab("ตั้งค่า");}
+ lv_mem_monitor(&after);assert(after.free_size+512>=before.free_size);assert(persistence==saved);
+ brightness=100;language=Language::Thai;ui_tick();tapTab("คู่หู");
+ std::cout<<"Brightness actual pointer: padding/min/mid/max, preview/no writes, one leased release, sparse merge, cancel/language/BOOT, busy/save/apply failure, web sync, 40 rebuilds passed\n";
+}
+
 // These tests catch fabricated missing readings, wrong WMO branches, text
 // clipping, misplaced chart annotations, and stale pointers after rebuilds.
 lv_obj_t* weatherLabel(const char* value){
@@ -579,6 +650,7 @@ int main(){
     lv_mem_monitor(&after);
     assert(after.free_size+512>=before.free_size && "repeated setup reveal/navigation must not leak LVGL heap");
     capture("navigation-cycled.ppm");
+    brightnessChecks();
     languageChecks();
     std::cout<<"Setup token rotation, reflow, close/reopen checks passed; ";
     std::cout<<"Navigation/IP, fractional windows, rotation hold/skip checks passed; ";

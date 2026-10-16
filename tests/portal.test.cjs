@@ -9,7 +9,7 @@ const production = asset.split('<script>')[1].split('</script>')[0];
 async function portal(options={}) {
   if(typeof options==='boolean')options={displayLoad:options};
   const scenario=options;
-  const {displayLoad=true,configLoad=true,reloadLoad=true}=options;let configLoads=0;let displayLoads=0;let display={codexUsageMode:"weekly",language:options.language||"th"};
+  const {displayLoad=true,configLoad=true,reloadLoad=true}=options;let configLoads=0;let displayLoads=0;let display={codexUsageMode:"weekly",language:options.language||"th",brightnessPercent:100,...options.display};
   const uploads=[];let firmware={version:"2.0.0",capacity:1966080,busy:false,runningPartition:"ota_0"};
   const timers=new Map();let nextTimer=0;
   const elements = new Map();const translationNodes=[];
@@ -302,4 +302,34 @@ test('firmware picker copy follows selected language and keeps exact selected fi
  assert.equal(p.get('firmwareSelected').textContent,'desk-duo-app.bin');
  p.get('language').value='en';p.get('language').change();assert.equal(p.get('firmwareSelected').textContent,'desk-duo-app.bin');
  p.get('firmwareFile').files=[];p.get('firmwareFile').change();assert.equal(p.get('firmwareSelected').textContent,'No file selected');
+});
+
+// Exercises production script state and actual sparse request bodies.
+test('brightness previews numbers, sparse/combined saves and locale preserve editors',async()=>{
+ const p=await portal({language:'en'});
+ assert.equal(p.get('brightnessPercent').value,100);
+ assert.match(p.get('brightnessStored').textContent,/100%/);
+ p.get('weatherLabel').value='Keep user label';
+ p.get('brightnessPercent').value='5';p.get('brightnessPercent').input();
+ assert.equal(p.get('brightnessValue').textContent,'5%');
+ assert.match(p.get('brightnessStored').textContent,/100%.*Not saved/);
+ p.get('language').value='th';p.get('language').change();
+ assert.equal(p.get('brightnessPercent').value,'5');assert.equal(p.get('weatherLabel').value,'Keep user label');
+ await p.displaySubmit();assert.deepEqual(p.displayRequests,[{language:'th',brightnessPercent:5}]);
+ p.get('brightnessPercent').value='100';p.get('brightnessPercent').input();await p.displaySubmit();
+ assert.deepEqual(p.displayRequests[1],{brightnessPercent:100});
+ assert.equal(p.get('weatherLabel').value,'Keep user label');
+});
+test('brightness failure retains saved value and accepted readback failure invalidates it',async()=>{
+ const p=await portal({language:'en',displaySave:false});p.get('brightnessPercent').value='50';p.get('brightnessPercent').input();await p.displaySubmit();
+ assert.match(p.get('brightnessStored').textContent,/100%.*Not saved/);assert.equal(p.get('brightnessPercent').value,'50');
+ const q=await portal({language:'en',displayReload:false});q.get('brightnessPercent').value='5';q.get('brightnessPercent').input();await q.displaySubmit();
+ assert.equal(q.get('brightnessStored').textContent,'Saved brightness unknown');assert.equal(q.get('displayButton').disabled,true);assert.equal(q.get('brightnessPercent').value,'5');
+});
+test('invalid or missing brightness readback never establishes saved display state',async()=>{
+ for(const value of [undefined,null,true,4,101,50.5,'50']){
+  const p=await portal({language:'en',display:{brightnessPercent:value}});
+  assert.equal(p.get('displayButton').disabled,true);assert.match(p.get('brightnessStored').textContent,/ไม่ทราบ|unknown/);
+ }
+ for(const value of [5,100]){const p=await portal({display:{brightnessPercent:value}});assert.equal(p.get('displayButton').disabled,false);}
 });

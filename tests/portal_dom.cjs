@@ -10,10 +10,10 @@ let browser;
 test.before(async()=>{fs.mkdirSync(path.join(__dirname,"../.platformio/native-ui-regression"),{recursive:true});browser=await chromium.launch({headless:true,...(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE?{executablePath:process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE}:{})});});
 test.after(async()=>{if(browser)await browser.close();});
 async function open(options={}){
- const page=await browser.newPage({viewport:{width:720,height:1280}});
+ const page=await browser.newPage({viewport:{width:options.width||720,height:1280}});
  await page.route('**/*',route=>route.abort());
  await page.evaluate(options=>{
-  window.scenario=options;window.posts=[];window.display={codexUsageMode:'weekly',language:options.language||'th'};window.displayLoads=0;
+  window.scenario=options;window.posts=[];window.display={codexUsageMode:'weekly',language:options.language||'th',brightnessPercent:100,...options.display};window.displayLoads=0;
   window.fetch=async(url,request={})=>{
    if(url==='/api/display'){
     if(request.method){const patch=JSON.parse(request.body);posts.push(patch);if(!scenario.saveFails)Object.assign(display,patch);return {ok:!scenario.saveFails,status:scenario.saveFails?503:204};}
@@ -32,7 +32,7 @@ async function open(options={}){
    throw Error('Unexpected fetch '+url);
   };
  },options);
- await page.setContent(html);await page.waitForFunction(()=>!document.getElementById('displayButton').disabled);
+ await page.setContent(html);await page.waitForFunction(()=>document.getElementById('displayStatus').textContent || !document.getElementById('displayButton').disabled);
  return page;
 }
 test('actual portal DOM previews both languages, reads back independent saves, and preserves form data',async()=>{
@@ -86,4 +86,43 @@ test('actual DOM failed save/readback and config failure preserve honest saved-l
  await q.screenshot({path:path.join(__dirname,'../.platformio/native-ui-regression/portal-language-readback-failed-th.png'),fullPage:true});
  await q.evaluate(()=>document.getElementById('display').requestSubmit());assert.equal((await q.evaluate(()=>posts)).length,1);
  await q.close();
+});
+
+test('actual brightness DOM: range endpoints, sparse/combined saves, narrow layout and locale preservation',async()=>{
+ for(const lang of ['en','th']){
+  const page=await open({language:lang,width:320});
+  const range=page.locator('#brightnessPercent');assert.equal(await range.getAttribute('min'),'5');assert.equal(await range.getAttribute('max'),'100');
+  assert.equal(await range.inputValue(),'100');assert.match(await page.locator('#brightnessStored').textContent(),/100%/);
+  await page.locator('#weatherLabel').fill('My กรุงเทพฯ label');await range.fill('5');await range.dispatchEvent('input');
+  assert.equal(await page.locator('#brightnessValue').textContent(),'5%');assert.match(await page.locator('#brightnessStored').textContent(),/100%.*(Not saved|ยังไม่ได้บันทึก)/);
+  const other=lang==='en'?'th':'en';await page.locator('#language').selectOption(other);assert.equal(await range.inputValue(),'5');assert.equal(await page.locator('#weatherLabel').inputValue(),'My กรุงเทพฯ label');
+  await page.locator('#codexUsageMode').selectOption('both');await page.locator('#displayButton').click();await page.waitForFunction(()=>posts.length===1 && !document.getElementById('displayButton').disabled);
+  assert.deepEqual(await page.evaluate(()=>posts),[{codexUsageMode:'both',language:other,brightnessPercent:5}]);
+  await range.fill('100');await range.dispatchEvent('input');await page.locator('#displayButton').click();await page.waitForFunction(()=>posts.length===2 && !document.getElementById('displayButton').disabled);
+  assert.deepEqual(await page.evaluate(()=>posts[1]),{brightnessPercent:100});
+  assert.equal(await page.locator('#weatherLabel').inputValue(),'My กรุงเทพฯ label');
+  await page.locator('#language').selectOption(lang);
+  await page.locator('#displayButton').click();await page.waitForFunction(()=>posts.length===3 && !document.getElementById('displayButton').disabled);
+  assert.doesNotMatch(await page.locator('#languageStored').textContent(),/Not saved|ยังไม่ได้บันทึก/);
+  await page.locator('#display').scrollIntoViewIfNeeded();
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+  const hit=await range.boundingBox();assert.ok(hit.height>=44 && hit.x>=0 && hit.x+hit.width<=320);
+  await page.screenshot({path:path.join(__dirname,'../.platformio/native-ui-regression/portal-brightness-'+lang+'-320.png')});
+  await page.setViewportSize({width:900,height:1100});await page.locator('#display').scrollIntoViewIfNeeded();
+  await page.screenshot({path:path.join(__dirname,'../.platformio/native-ui-regression/portal-brightness-'+lang+'-desktop.png')});await page.close();
+ }
+});
+test('actual brightness DOM retains failed selection/saved value; validates readback before claiming current',async()=>{
+ const p=await open({language:'en',saveFails:true});await p.locator('#brightnessPercent').fill('50');await p.locator('#brightnessPercent').dispatchEvent('input');await p.locator('#displayButton').click();await p.waitForFunction(()=>document.getElementById('displayStatus').textContent.includes('Could not save'));
+ assert.match(await p.locator('#brightnessStored').textContent(),/100%.*Not saved/);assert.equal(await p.locator('#brightnessPercent').inputValue(),'50');await p.close();
+ for(const display of [null,{brightnessPercent:undefined},{brightnessPercent:null},{brightnessPercent:true},{brightnessPercent:4},{brightnessPercent:101},{brightnessPercent:50.5},{brightnessPercent:'50'}]){
+  const q=await open({language:'en',reloadFails:display===null});
+  if(display)await q.evaluate(value=>{scenario.display=value;window.display={...window.display,...value};},display);
+  await q.locator('#brightnessPercent').fill('5');await q.locator('#brightnessPercent').dispatchEvent('input');await q.locator('#weatherLabel').fill('Unsaved user data');
+  // Invalid response on readback, after accepted POST, must invalidate all saved claims.
+  if(display)await q.evaluate(value=>{const original=fetch;window.fetch=async(url,request={})=>{const r=await original(url,request);return url==='/api/display'&&!request.method?{ok:true,json:async()=>({...window.display,...value})}:r;};},display);
+  await q.locator('#displayButton').click();await q.waitForFunction(()=>document.getElementById('displayStatus').textContent.includes('readback failed'));
+  assert.equal(await q.locator('#brightnessStored').textContent(),'Saved brightness unknown');assert.equal(await q.locator('#languageStored').textContent(),'Saved language unknown');assert.equal(await q.locator('#displayButton').isDisabled(),true);
+  assert.equal(await q.locator('#brightnessPercent').inputValue(),'5');assert.equal(await q.locator('#weatherLabel').inputValue(),'Unsaved user data');await q.close();
+ }
 });

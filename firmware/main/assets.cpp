@@ -13,7 +13,7 @@ const char* const sprite_codex[16] = {
 "....gggggggg....",".....gg..gg.....","....ggg..ggg....","...www....www..."};
 const char portal_html[] = R"HTML(<!doctype html><html lang="th"><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>ตั้งค่า Desk Duo</title>
-<style>body{font:16px system-ui;max-width:680px;margin:auto;padding:20px;background:#000;color:#e9edf2}fieldset{margin:18px 0;border:1px solid #363a40;border-radius:8px}label{display:block;margin:10px 0}input,textarea,select,button{font:inherit;box-sizing:border-box;max-width:100%}input:not([type=checkbox]),textarea{display:block;width:100%;padding:8px}textarea{height:84px}small{overflow-wrap:anywhere}button{padding:10px 20px}#status,#firmwareStatus{white-space:pre-wrap}input,textarea,select{background:#14171b;color:#e9edf2;border:1px solid #515861;border-radius:6px}button{background:#a5c9ee;color:#061322;border:0;border-radius:8px}button:disabled{opacity:.5}progress{width:100%;accent-color:#a5c9ee}input[type=file]{position:absolute;opacity:0;width:1px!important;height:1px;padding:0}input[type=file]:focus+label{outline:2px solid #e9edf2;outline-offset:2px}.filepick{display:inline-block;padding:10px 20px;background:#a5c9ee;color:#061322;border-radius:8px;cursor:pointer}</style>
+<style>body{font:16px system-ui;max-width:680px;margin:auto;padding:20px;background:#000;color:#e9edf2}fieldset{min-width:0;margin:18px 0;border:1px solid #363a40;border-radius:8px}label{display:block;margin:10px 0}input,textarea,select,button{font:inherit;box-sizing:border-box;max-width:100%}input:not([type=checkbox]),textarea{display:block;width:100%;padding:8px}textarea{height:84px}small{overflow-wrap:anywhere}button{padding:10px 20px}#status,#firmwareStatus{white-space:pre-wrap}input,textarea,select{background:#14171b;color:#e9edf2;border:1px solid #515861;border-radius:6px}button{background:#a5c9ee;color:#061322;border:0;border-radius:8px}button:disabled{opacity:.5}progress{width:100%;accent-color:#a5c9ee}input[type=range]{min-height:44px;accent-color:#c6e7dc;padding:0!important}input[type=file]{position:absolute;opacity:0;width:1px!important;height:1px;padding:0}input[type=file]:focus+label{outline:2px solid #e9edf2;outline-offset:2px}.filepick{display:inline-block;padding:10px 20px;background:#a5c9ee;color:#061322;border-radius:8px;cursor:pointer}</style>
 <h1>Desk Duo</h1><p><span data-i18n="ตั้งค่า Wi-Fi และแหล่งข้อมูลของจอ ค่าลับที่เว้นว่างจะคงค่าเดิม">ตั้งค่า Wi-Fi และแหล่งข้อมูลของจอ ค่าลับที่เว้นว่างจะคงค่าเดิม</span></p>
 <form id="settings" autocomplete="off">
 <fieldset><legend><span data-i18n="Wi-Fi / usage">Wi-Fi / การใช้งาน</span></legend>
@@ -31,6 +31,7 @@ const char portal_html[] = R"HTML(<!doctype html><html lang="th"><meta charset="
 <form id="display"><fieldset><legend><span data-i18n="การแสดง usage ของ Codex">การแสดงผล / การใช้งาน Codex</span></legend>
 <label><span data-i18n="ภาษา / Language">ภาษา</span><select id="language"><option value="th" data-i18n="ไทย / Thai">ไทย</option><option value="en" data-i18n="อังกฤษ / English">อังกฤษ</option></select></label><p id="languageStored" role="status"></p>
 <label><span data-i18n="แสดงช่วง usage">แสดงช่วงการใช้งาน</span><select id="codexUsageMode"><option value="both" data-i18n="5h + Weekly">5 ชม. + สัปดาห์</option><option value="weekly" data-i18n="Weekly อย่างเดียว">สัปดาห์อย่างเดียว</option></select></label>
+<label><span data-i18n="ความสว่าง">ความสว่าง</span> <output id="brightnessValue" for="brightnessPercent">100%</output><input id="brightnessPercent" type="range" min="5" max="100" step="1" value="100"></label><p id="brightnessStored" role="status"></p>
 <button id="displayButton" type="submit" disabled><span data-i18n="บันทึกการแสดง usage">บันทึกการแสดงผล</span></button><p id="displayStatus" role="status"></p>
 </fieldset></form>
 <form id="firmware"><fieldset><legend><span data-i18n="Firmware update">อัปเดตเฟิร์มแวร์</span></legend>
@@ -44,6 +45,9 @@ const char portal_html[] = R"HTML(<!doctype html><html lang="th"><meta charset="
 <script>
 const $=id=>document.getElementById(id);
 const copy={
+ "ความสว่าง":{"th":"ความสว่าง","en":"Brightness"},
+ "ความสว่างที่บันทึก: ":{"th":"ความสว่างที่บันทึก: ","en":"Saved brightness: "},
+ "ยังไม่ทราบความสว่างที่บันทึก":{"th":"ยังไม่ทราบความสว่างที่บันทึก","en":"Saved brightness unknown"},
  "Desk Duo setup": {
   "th": "ตั้งค่า Desk Duo",
   "en": "Desk Duo setup"
@@ -559,17 +563,20 @@ $('settings').addEventListener('submit',async e=>{
 let displayLoaded=false,displaySaved,displaySaving=false;
 $('displayButton').disabled=true;
 function displayReadback(current){
- if(!['both','weekly'].includes(current.codexUsageMode) || !['th','en'].includes(current.language))throw issue(()=>t("โหลดการแสดง usage ไม่สำเร็จ"));
- displaySaved=current;$('codexUsageMode').value=current.codexUsageMode;$('language').value=current.language;
+ if(!['both','weekly'].includes(current.codexUsageMode) || !['th','en'].includes(current.language) || !Number.isInteger(current.brightnessPercent) || current.brightnessPercent<5 || current.brightnessPercent>100)throw issue(()=>t("โหลดการแสดง usage ไม่สำเร็จ"));
+ displaySaved=current;$('codexUsageMode').value=current.codexUsageMode;$('language').value=current.language;$('brightnessPercent').value=current.brightnessPercent;
  displayLoaded=true;$('displayButton').disabled=false;applyLanguage(current.language);languageReadback();
 }
 function languageReadback(){
+ put('brightnessValue',()=>$('brightnessPercent').value+'%');
+ put('brightnessStored',()=>displaySaved?t("ความสว่างที่บันทึก: ")+displaySaved.brightnessPercent+'%'+(Number($('brightnessPercent').value)!==displaySaved.brightnessPercent?t(" · ยังไม่ได้บันทึก"):""):t("ยังไม่ทราบความสว่างที่บันทึก"));
  put('languageStored',()=>displaySaved?t("ภาษาที่บันทึก: ")+t(displaySaved.language==='en'?"อังกฤษ / English":"ไทย / Thai")+($('language').value!==displaySaved.language?t(" · ยังไม่ได้บันทึก"):""):t("ยังไม่ทราบภาษาที่บันทึก"));
 }
 async function loadDisplay(){
  const r=await fetch('/api/display',{cache:'no-store'});if(!r.ok)throw issue(()=>t("โหลดการแสดง usage ไม่สำเร็จ"));
  displayReadback(await r.json());
 }
+$('brightnessPercent').addEventListener('input',languageReadback);
 $('language').addEventListener('change',()=>{applyLanguage($('language').value);languageReadback();});
 $('display').addEventListener('submit',async e=>{
  e.preventDefault();if(displaySaving)return;
@@ -578,6 +585,9 @@ $('display').addEventListener('submit',async e=>{
   const patch={};
   if($('codexUsageMode').value!==displaySaved.codexUsageMode)patch.codexUsageMode=$('codexUsageMode').value;
   if($('language').value!==displaySaved.language)patch.language=$('language').value;
+  const brightness=Number($('brightnessPercent').value);
+  if(!Number.isInteger(brightness)||brightness<5||brightness>100)throw issue(()=>t("โหลดการแสดง usage ไม่สำเร็จ"));
+  if(brightness!==displaySaved.brightnessPercent)patch.brightnessPercent=brightness;
   if(!Object.keys(patch).length){put('displayStatus',()=>t("ไม่มีการเปลี่ยนแปลง"));return;}
   displaySaving=true;$('displayButton').disabled=true;put('displayStatus',()=>t("กำลังบันทึก..."));
   const r=await fetch('/api/display',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(patch)});
