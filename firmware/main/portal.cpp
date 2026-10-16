@@ -2,6 +2,8 @@
 #include "input.hpp"
 #include "network.hpp"
 #include "runtime.hpp"
+#include "brightness_policy.hpp"
+#include "backlight.hpp"
 #include "assets.hpp"
 #include "ota.hpp"
 #include "ota_policy.hpp"
@@ -53,9 +55,17 @@ esp_err_t route(httpd_req_t* request) {
         httpd_resp_set_type(request, "application/json");
         if (path == "/api/display") {
             const auto settings = runtime_display_settings();
+            const auto plan = brightness_plan(settings, std::time(nullptr));
+            const auto effective = backlight_last_applied_percent();
             return respond(request, 200, std::string("{\"codexUsageMode\":\"") +
                 (settings.mode == CodexUsageMode::Weekly ? "weekly" : "both") + "\",\"language\":\"" +
-                (settings.language == Language::English ? "en" : "th") + "\",\"brightnessPercent\":" + std::to_string(settings.brightnessPercent) + "}");
+                (settings.language == Language::English ? "en" : "th") + "\",\"brightnessPercent\":" + std::to_string(settings.brightnessPercent) +
+                ",\"brightnessAuto\":" + (settings.brightnessAuto ? "true" : "false") +
+                ",\"brightnessDayStart\":\"" + brightness_time_string(settings.brightnessDayStart) +
+                "\",\"brightnessNightStart\":\"" + brightness_time_string(settings.brightnessNightStart) +
+                "\",\"brightnessTargetPercent\":" + std::to_string(plan.percent) +
+                ",\"brightnessEffectivePercent\":" + (effective ? std::to_string(*effective) : "null") +
+                ",\"brightnessPhase\":\"" + brightness_phase_name(plan.phase) + "\"}");
         }
         if (path == "/api/network") return respond(request, 200, network_diagnostics_json());
         if (path == "/api/touch") return respond(request, 200, input_diagnostics_json());

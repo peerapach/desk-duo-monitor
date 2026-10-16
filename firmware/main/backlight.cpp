@@ -1,11 +1,17 @@
 #include "backlight.hpp"
 #include "driver/ledc.h"
+#include <atomic>
 namespace deskduo {
 namespace {
 bool initialized = false;
 int appliedDuty = -1;
+std::atomic<uint8_t> appliedPercent{0};
 bool valid(uint8_t percent) { return percent >= 5 && percent <= 100; }
 uint32_t duty(uint8_t percent) { return (static_cast<uint32_t>(percent) * 4095 + 50) / 100; }
+}
+std::optional<uint8_t> backlight_last_applied_percent() {
+    const auto percent = appliedPercent.load();
+    return percent ? std::optional<uint8_t>(percent) : std::nullopt;
 }
 esp_err_t backlight_init(uint8_t brightnessPercent) {
     if (!valid(brightnessPercent)) return ESP_ERR_INVALID_ARG;
@@ -31,6 +37,7 @@ esp_err_t backlight_init(uint8_t brightnessPercent) {
     if (error != ESP_OK) return error;
     initialized = true;
     appliedDuty = static_cast<int>(channel.duty);
+    appliedPercent.store(brightnessPercent);
     return ESP_OK;
 }
 esp_err_t display_set_brightness(uint8_t brightnessPercent) {
@@ -41,7 +48,7 @@ esp_err_t display_set_brightness(uint8_t brightnessPercent) {
     auto error = ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, next);
     if (error != ESP_OK) return error;
     error = ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
-    if (error == ESP_OK) appliedDuty = static_cast<int>(next);
+    if (error == ESP_OK) { appliedDuty = static_cast<int>(next); appliedPercent.store(brightnessPercent); }
     return error;
 }
 }

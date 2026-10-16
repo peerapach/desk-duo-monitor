@@ -494,6 +494,15 @@ void redirectAndTouchContract() {
 }  // namespace
 
 int main(int argc, char** argv) {
+    CHECK(deskduo::parseDisplayPreference(R"({"brightnessAuto":true,"brightnessDayStart":"07:15","brightnessNightStart":"19:45"})").value);
+    for (const auto* bad : {R"({"brightnessAuto":1})",R"({"brightnessAuto":null})",R"({"brightnessAuto":false,"brightnessAuto":true})",R"({"brightnessDayStart":"6:00"})",R"({"brightnessDayStart":"24:00"})",R"({"brightnessNightStart":"00:60"})",R"({"brightnessNightStart":360})",R"({"brightnessDayStart":"06:00x"})",R"({"brightnessPhase":"day"})",R"({"brightnessTargetPercent":5})",R"({"brightnessEffectivePercent":5})"}) CHECK(!deskduo::parseDisplayPreference(bad).value);
+    { deskduo::DisplayPreference pref; int writes=0;
+      CHECK(pref.patch(R"({"brightnessDayStart":"18:00"})",[&](const auto&){++writes;return true;})==400);
+      CHECK(writes==0);
+      CHECK(pref.patch(R"({"brightnessAuto":true,"brightnessDayStart":"19:45","brightnessNightStart":"07:15"})",[&](const auto&){++writes;return true;})==204);
+      CHECK(pref.settings().brightnessAuto && pref.settings().brightnessDayStart==1185 && pref.settings().brightnessNightStart==435 && writes==1);
+      CHECK(pref.patch(R"({"brightnessAuto":false})",[&](const auto&){++writes;return true;})==204 && !pref.settings().brightnessAuto);
+    }
     if (argc != 2) {
         std::cerr << "usage: firmware_core_test REPOSITORY_ROOT\n";
         return 2;

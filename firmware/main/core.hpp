@@ -32,8 +32,8 @@ struct Usage {
 
 enum class CodexUsageMode : uint8_t { Both = 0, Weekly = 1 };
 enum class Language : uint8_t { Thai = 0, English = 1 };
-struct DisplaySettings { CodexUsageMode mode = CodexUsageMode::Both; Language language = Language::Thai; uint8_t brightnessPercent = 100; };
-struct DisplayPatch { std::optional<CodexUsageMode> mode; std::optional<Language> language; std::optional<uint8_t> brightnessPercent; };
+struct DisplaySettings { CodexUsageMode mode = CodexUsageMode::Both; Language language = Language::Thai; uint8_t brightnessPercent = 100; bool brightnessAuto = false; uint16_t brightnessDayStart = 360; uint16_t brightnessNightStart = 1080; };
+struct DisplayPatch { std::optional<CodexUsageMode> mode; std::optional<Language> language; std::optional<uint8_t> brightnessPercent; std::optional<bool> brightnessAuto; std::optional<uint16_t> brightnessDayStart; std::optional<uint16_t> brightnessNightStart; };
 ParseResult<DisplayPatch> parseDisplayPreference(const std::string& json);
 
 // Return source telemetry unchanged; manual weekly mode can classify only

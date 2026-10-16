@@ -954,6 +954,24 @@ ParseResult<DisplayPatch> parseDisplayPreference(const std::string& json) {
             patch.brightnessPercent = static_cast<uint8_t>(percent);
             continue;
         }
+        if (key == "brightnessAuto" && !patch.brightnessAuto) {
+            if (!cJSON_IsBool(item)) return {std::nullopt, "display"};
+            patch.brightnessAuto = cJSON_IsTrue(item);
+            continue;
+        }
+        if ((key == "brightnessDayStart" && !patch.brightnessDayStart) ||
+            (key == "brightnessNightStart" && !patch.brightnessNightStart)) {
+            if (!cJSON_IsString(item)) return {std::nullopt, "display"};
+            const std::string value = item->valuestring;
+            if (value.size() != 5 || value[2] != ':' ||
+                value[0] < '0' || value[0] > '9' || value[1] < '0' || value[1] > '9' ||
+                value[3] < '0' || value[3] > '9' || value[4] < '0' || value[4] > '9') return {std::nullopt, "display"};
+            const int hour = (value[0]-'0')*10 + value[1]-'0';
+            const int minute = (value[3]-'0')*10 + value[4]-'0';
+            if (hour > 23 || minute > 59) return {std::nullopt, "display"};
+            (key == "brightnessDayStart" ? patch.brightnessDayStart : patch.brightnessNightStart) = hour*60 + minute;
+            continue;
+        }
         if (!cJSON_IsString(item)) return {std::nullopt, "display"};
         const std::string value = item->valuestring;
         if (key == "codexUsageMode" && !patch.mode) {

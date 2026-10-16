@@ -1,5 +1,7 @@
 #include "../firmware/main/backlight.hpp"
 #include "driver/ledc.h"
+#include "../firmware/main/brightness_policy.hpp"
+#include <cstdlib>
 #include <cassert>
 #include <iostream>
 namespace { int timers=0,channels=0,sets=0,updates=0,failure=0;uint32_t duty=0; }
@@ -9,11 +11,13 @@ int ledc_set_duty(int mode,int channel,uint32_t value){++sets;assert(mode==LEDC_
 int ledc_update_duty(int mode,int channel){++updates;assert(mode==LEDC_LOW_SPEED_MODE && channel==LEDC_CHANNEL_0);return failure==4?ESP_FAIL:ESP_OK;}
 int main(){
  using namespace deskduo;
+ assert(!backlight_last_applied_percent());
  assert(display_set_brightness(50)==ESP_ERR_INVALID_STATE);
  assert(backlight_init(4)==ESP_ERR_INVALID_ARG && timers==0);
  failure=1;assert(backlight_init(5)==ESP_FAIL && channels==0);
  failure=2;assert(backlight_init(5)==ESP_FAIL);
- failure=0;assert(backlight_init(5)==ESP_OK && duty==205);
+ assert(!backlight_last_applied_percent());
+ failure=0;assert(backlight_init(5)==ESP_OK && duty==205 && backlight_last_applied_percent()==5);
  for(int percent:{5,50,100}){
    assert(backlight_init(percent)==ESP_OK);
    const auto expected=(percent*4095+50)/100;assert(duty==static_cast<uint32_t>(expected));
@@ -24,9 +28,18 @@ int main(){
  assert(display_set_brightness(50)==ESP_OK && duty==2048);
  for(int bad:{0,4,101,255})assert(display_set_brightness(bad)==ESP_ERR_INVALID_ARG);
  for(int stage:{3,4}){
-   failure=stage;assert(display_set_brightness(5)==ESP_FAIL);
+   failure=stage;assert(display_set_brightness(5)==ESP_FAIL && backlight_last_applied_percent()==50);
    failure=0;auto old=sets;assert(display_set_brightness(5)==ESP_OK && sets==old+1 && duty==205);
-   assert(display_set_brightness(50)==ESP_OK);
+   assert(backlight_last_applied_percent()==5);
+   assert(display_set_brightness(50)==ESP_OK && backlight_last_applied_percent()==50);
  }
+ // Initialization module boundary: the night plan is the first LEDC request.
+ setenv("TZ","ICT-7",1);tzset();std::tm local{};local.tm_year=126;local.tm_mon=9;local.tm_mday=16;local.tm_hour=20;
+ DisplaySettings saved;saved.brightnessPercent=11;saved.brightnessAuto=true;
+ auto initial=brightness_plan(saved,std::mktime(&local));auto channelCount=channels;
+ assert(initial.percent==6 && initial.phase==BrightnessPhase::Night);
+ assert(backlight_init(initial.percent)==ESP_OK && channels==channelCount+1 && duty==246 && backlight_last_applied_percent()==6);
+ failure=1;assert(backlight_init(100)==ESP_FAIL && backlight_last_applied_percent()==6);failure=0;
+ assert(backlight_init(brightness_plan(saved,0).percent)==ESP_OK && backlight_last_applied_percent()==11);
  std::cout<<"Production backlight: saved 5/50/100, GPIO21 LEDC configuration, rounded duty, no redundant apply, errors retry passed\n";
 }

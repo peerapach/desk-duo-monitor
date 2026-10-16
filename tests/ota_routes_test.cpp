@@ -6,9 +6,13 @@
 #include <cstring>
 #include <iostream>
 #include <vector>
+#include <ctime>
+#include <cstdlib>
 #include "ota_image_fixture.hpp"
 #include "esp_image_format.h"
 namespace {
+time_t routeEpoch=0;
+std::optional<uint8_t> appliedPercent;
 std::map<std::pair<std::string,int>,Handler> routes;
 TaskFunction task=nullptr;void* taskArg=nullptr;
 int asyncCount=0,completed=0,selected=0,aborted=0,confirmed=0,patches=0,usage=0;
@@ -36,6 +40,7 @@ httpd_req_t request(Exchange& e,const char* path="/api/firmware",httpd_method_t 
 int dispatch(httpd_req_t& r) {return routes.at({r.uri,r.method})(&r);}
 void runWorker() {assert(task);auto f=task;task=nullptr;try{f(taskArg);}catch(const TaskExit&){} }
 }
+extern "C" time_t time(time_t* out){if(out)*out=routeEpoch;return routeEpoch;}
 size_t httpd_req_get_hdr_value_len(httpd_req_t* r,const char* name){return r->exchange->headers[name].size();}
 int httpd_req_get_hdr_value_str(httpd_req_t* r,const char* name,char* out,size_t n){auto& s=r->exchange->headers[name];if(n<=s.size())return ESP_FAIL;std::memcpy(out,s.c_str(),s.size()+1);return ESP_OK;}
 int httpd_req_recv(httpd_req_t* r,char* out,size_t n){auto& e=*r->exchange;++e.reads;n=std::min({n,size_t(257),e.body.size()-e.offset});std::memcpy(out,e.body.data()+e.offset,n);e.offset+=n;++clockMs;return n;}
@@ -67,6 +72,7 @@ void vTaskDelay(int ticks){clockMs+=ticks;}
 void esp_restart(){throw Reboot{};}
 namespace deskduo {
 extern const char portal_html[]="test page";
+std::optional<uint8_t> backlight_last_applied_percent(){return appliedPercent;}
 RequestConfig runtime_config(){auto c=defaultConfig();c.setupPassword="test-admin";c.usageToken="test-usage-token-123";c.ssid="saved-network";c.wifiPassword="test-wifi-secret";c.weather.url="https://weather.test/data?key=test-query-secret";c.weather.headers={{"X-Key","test-header-secret"}};return {c,0};}
 DisplayPreference displayPreference;
 bool displaySave=true;int displayWrites=0;
@@ -123,11 +129,11 @@ int main(int argc,char**){
 
     {
         auto e=exchange();auto r=request(e,"/api/display",HTTP_GET);
-        assert(dispatch(r)==ESP_OK && e.response==R"({"codexUsageMode":"both","language":"th","brightnessPercent":100})");
+        assert(dispatch(r)==ESP_OK && e.response==R"({"codexUsageMode":"both","language":"th","brightnessPercent":100,"brightnessAuto":false,"brightnessDayStart":"06:00","brightnessNightStart":"18:00","brightnessTargetPercent":100,"brightnessEffectivePercent":null,"brightnessPhase":"manual"})");
         e=exchange();e.headers["Content-Type"]="application/json";e.body=R"({"codexUsageMode":"weekly"})";r=request(e,"/api/display");
         assert(dispatch(r)==ESP_OK && e.status=="204 No Content");
         e=exchange();r=request(e,"/api/display",HTTP_GET);
-        assert(dispatch(r)==ESP_OK && e.response==R"({"codexUsageMode":"weekly","language":"th","brightnessPercent":100})");
+        assert(dispatch(r)==ESP_OK && e.response==R"({"codexUsageMode":"weekly","language":"th","brightnessPercent":100,"brightnessAuto":false,"brightnessDayStart":"06:00","brightnessNightStart":"18:00","brightnessTargetPercent":100,"brightnessEffectivePercent":null,"brightnessPhase":"manual"})");
         displaySave=false;e=exchange();e.headers["Content-Type"]="application/json";e.body=R"({"codexUsageMode":"both"})";r=request(e,"/api/display");
         assert(dispatch(r)==ESP_FAIL && e.status=="503 Service Unavailable");
         assert(runtime_display_mode()==CodexUsageMode::Weekly);displaySave=true;
@@ -148,7 +154,7 @@ int main(int argc,char**){
         auto e=exchange();e.headers["Content-Type"]="application/json";e.body=R"({"language":"en"})";auto r=request(e,"/api/display");
         assert(dispatch(r)==ESP_OK && runtime_language()==Language::English && runtime_display_mode()==CodexUsageMode::Both);
         e=exchange();r=request(e,"/api/display",HTTP_GET);
-        assert(dispatch(r)==ESP_OK && e.response==R"({"codexUsageMode":"both","language":"en","brightnessPercent":100})");
+        assert(dispatch(r)==ESP_OK && e.response==R"({"codexUsageMode":"both","language":"en","brightnessPercent":100,"brightnessAuto":false,"brightnessDayStart":"06:00","brightnessNightStart":"18:00","brightnessTargetPercent":100,"brightnessEffectivePercent":null,"brightnessPhase":"manual"})");
         for(auto bad:{R"({"language":"TH"})",R"({"language":true})",R"({"language":null})",R"({"language":"en","language":"th"})",R"({"language":"th","codexUsageMode":"invalid"})",R"({"language":"th","unknown":0})"}) {
             e=exchange();e.headers["Content-Type"]="application/json";e.body=bad;r=request(e,"/api/display");
             assert(dispatch(r)==ESP_FAIL && e.status=="400 Bad Request" && runtime_language()==Language::English && runtime_display_mode()==CodexUsageMode::Both);
@@ -162,7 +168,7 @@ int main(int argc,char**){
         e=exchange();e.headers["Origin"]="http://192.0.2.10";e.headers["Content-Type"]="application/json";e.body=R"({"language":"th","codexUsageMode":"weekly"})";r=request(e,"/api/display");
         assert(dispatch(r)==ESP_OK && runtime_language()==Language::Thai && runtime_display_mode()==CodexUsageMode::Weekly);
         e=exchange();r=request(e,"/api/display",HTTP_GET);
-        assert(dispatch(r)==ESP_OK && e.response==R"({"codexUsageMode":"weekly","language":"th","brightnessPercent":100})");
+        assert(dispatch(r)==ESP_OK && e.response==R"({"codexUsageMode":"weekly","language":"th","brightnessPercent":100,"brightnessAuto":false,"brightnessDayStart":"06:00","brightnessNightStart":"18:00","brightnessTargetPercent":100,"brightnessEffectivePercent":null,"brightnessPhase":"manual"})");
         assert(patches==0 && usage==0);
     }
 
@@ -172,12 +178,25 @@ int main(int argc,char**){
         auto r=request(e,"/api/display");assert(dispatch(r)==ESP_OK && runtime_display_settings().brightnessPercent==value);
         assert(runtime_display_mode()==CodexUsageMode::Weekly && runtime_language()==Language::Thai);
         e=exchange();r=request(e,"/api/display",HTTP_GET);assert(dispatch(r)==ESP_OK);
-        assert(e.response=="{\"codexUsageMode\":\"weekly\",\"language\":\"th\",\"brightnessPercent\":"+std::to_string(value)+"}");
+        assert(e.response=="{\"codexUsageMode\":\"weekly\",\"language\":\"th\",\"brightnessPercent\":"+std::to_string(value)+",\"brightnessAuto\":false,\"brightnessDayStart\":\"06:00\",\"brightnessNightStart\":\"18:00\",\"brightnessTargetPercent\":"+std::to_string(value)+",\"brightnessEffectivePercent\":null,\"brightnessPhase\":\"manual\"}");
       }
       for(auto bad:{R"({"brightnessPercent":4})",R"({"brightnessPercent":101})",R"({"brightnessPercent":50.5})",R"({"brightnessPercent":true})",R"({"brightnessPercent":null})",R"({"brightnessPercent":5,"brightnessPercent":100})",R"({"brightnessPercent":5,"unknown":1})"}) {
         auto e=exchange();e.headers["Content-Type"]="application/json";e.body=bad;auto r=request(e,"/api/display");
         const auto beforeWrites=displayWrites;assert(dispatch(r)==ESP_FAIL && e.status=="400 Bad Request" && runtime_display_settings().brightnessPercent==100 && displayWrites==beforeWrites);
       }
+    }
+
+    {
+      auto post=[&](const char* body,int expected){auto e=exchange();e.headers["Content-Type"]="application/json";e.body=body;auto r=request(e,"/api/display");auto writes=displayWrites;dispatch(r);assert(e.status==(expected==204?"204 No Content":"400 Bad Request"));assert(displayWrites==writes+(expected==204?1:0));};
+      post(R"({"brightnessAuto":true,"brightnessPercent":11,"brightnessDayStart":"07:15","brightnessNightStart":"19:45"})",204);
+      auto get=[&](const char* phase,int target,const char* effective){auto e=exchange();auto r=request(e,"/api/display",HTTP_GET);auto writes=displayWrites;assert(dispatch(r)==ESP_OK && e.reads==0 && writes==displayWrites);assert(e.response.find(R"("brightnessPercent":11,"brightnessAuto":true,"brightnessDayStart":"07:15","brightnessNightStart":"19:45")")!=std::string::npos);assert(e.response.find(std::string("\"brightnessTargetPercent\":")+std::to_string(target))!=std::string::npos);assert(e.response.find(std::string("\"brightnessEffectivePercent\":")+effective)!=std::string::npos);assert(e.response.find(std::string("\"brightnessPhase\":\"")+phase+"\"")!=std::string::npos);};
+      get("clock_wait",11,"null");
+      setenv("TZ","ICT-7",1);tzset();std::tm local{};local.tm_year=126;local.tm_mon=9;local.tm_mday=16;local.tm_hour=20;routeEpoch=std::mktime(&local);
+      appliedPercent=11;get("night",6,"11");appliedPercent=6;get("night",6,"6");
+      local.tm_hour=8;routeEpoch=std::mktime(&local);get("day",11,"6");
+      for(auto bad:{R"({"brightnessAuto":"true"})",R"({"brightnessAuto":true,"brightnessAuto":false})",R"({"brightnessDayStart":"7:15"})",R"({"brightnessNightStart":"24:00"})",R"({"brightnessDayStart":"19:45"})",R"({"brightnessNightStart":"07:15"})",R"({"brightnessPhase":"night"})",R"({"brightnessTargetPercent":50})",R"({"brightnessEffectivePercent":null})"})post(bad,400);
+      post(R"({"brightnessAuto":false,"brightnessDayStart":"19:45","brightnessNightStart":"19:45"})",400);
+      post(R"({"brightnessAuto":false})",204);
     }
 
     if(argc>1) {

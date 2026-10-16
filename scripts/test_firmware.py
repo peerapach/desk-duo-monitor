@@ -50,6 +50,11 @@ def main() -> int:
                            str(ROOT / "firmware/main/core.cpp"), str(ROOT / "tests/firmware_core_test.cpp"),
                            str(cjson_object), "-o", str(test_binary)])
     run([str(test_binary), str(ROOT)])
+    policy = output / "brightness_policy_test"
+    run(compiler("c++") + ["-std=c++17", "-Wall", "-Wextra", "-Werror", "-I", str(sdk),
+                           str(ROOT / "firmware/main/core.cpp"), str(ROOT / "firmware/main/brightness_policy.cpp"),
+                           str(ROOT / "tests/brightness_policy_test.cpp"), str(cjson_object), "-o", str(policy)])
+    run([str(policy)])
     diagnostics = output / "weather_diagnostics_test"
     diagnostic_sources = [str(ROOT / "firmware/main/weather_diagnostics.cpp")]
     run(compiler("c++") + ["-std=c++17", "-pthread", "-Wall", "-Wextra", "-Werror", "-I", str(sdk)] + diagnostic_sources +
@@ -69,7 +74,7 @@ def main() -> int:
     run([str(connect)])
     backlight = output / "backlight_test"
     run(compiler("c++") + ["-std=c++17", "-Wall", "-Wextra", "-Werror", "-I", str(ROOT / "tests/backlight_sdk"),
-                           str(ROOT / "firmware/main/backlight.cpp"), str(ROOT / "tests/backlight_test.cpp"), "-o", str(backlight)])
+                           str(ROOT / "firmware/main/backlight.cpp"), str(ROOT / "firmware/main/brightness_policy.cpp"), str(ROOT / "tests/backlight_test.cpp"), "-o", str(backlight)])
     run([str(backlight)])
     runtime = output / "runtime_display_test"
     run(compiler("c++") + ["-std=c++17", "-Wall", "-Wextra", "-Werror", "-I", str(ROOT / "tests/runtime_sdk"), "-I", str(sdk),
@@ -85,7 +90,7 @@ def main() -> int:
     run([str(ota)])
     routes = output / "ota_routes_test"
     run(compiler("c++") + ["-std=c++17", "-Wall", "-Wextra", "-Werror", "-I", str(ROOT / "tests/ota_sdk"), "-I", str(sdk),
-                           str(ROOT / "firmware/main/core.cpp"), str(ROOT / "firmware/main/ota.cpp"), str(ROOT / "firmware/main/portal.cpp"),
+                           str(ROOT / "firmware/main/core.cpp"), str(ROOT / "firmware/main/ota.cpp"), str(ROOT / "firmware/main/portal.cpp"), str(ROOT / "firmware/main/brightness_policy.cpp"),
                            str(ROOT / "tests/ota_routes_test.cpp"), str(cjson_object), "-o", str(routes)])
     run([str(routes)])
     run([str(routes), "--idle-capacity"])

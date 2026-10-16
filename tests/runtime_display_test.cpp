@@ -8,6 +8,8 @@ namespace {
 std::string configBlob;
 std::optional<uint8_t> savedPreference;
 std::optional<uint16_t> savedV2;
+std::optional<uint32_t> savedV3;
+int v3ReadError=ESP_OK,v3Reads=0;
 int v2Reads=0,v2ReadError=ESP_OK;
 uint8_t legacyMode=0;
 int preferenceWrites=0,blobWrites=0,commits=0,reads=0,legacyReads=0;
@@ -37,14 +39,21 @@ int nvs_get_u16(nvs_handle_t,const char* key,uint16_t* value){
  if(!savedV2)return ESP_ERR_NVS_NOT_FOUND;
  *value=*savedV2;return ESP_OK;
 }
-int nvs_set_u16(nvs_handle_t,const char* key,uint16_t value){
- ++preferenceWrites;assert(std::string(key)=="ui_pref_v2");
+int nvs_set_u16(nvs_handle_t,const char*,uint16_t){assert(false && "old keys immutable");return ESP_FAIL;}
+int nvs_get_u32(nvs_handle_t,const char* key,uint32_t* value){
+ ++reads;++v3Reads;assert(std::string(key)=="ui_pref_v3");
+ if(v3ReadError!=ESP_OK)return v3ReadError;
+ if(!savedV3)return ESP_ERR_NVS_NOT_FOUND;
+ *value=*savedV3;return ESP_OK;
+}
+int nvs_set_u32(nvs_handle_t,const char* key,uint32_t value){
+ ++preferenceWrites;assert(std::string(key)=="ui_pref_v3");
  if(setFails)return ESP_FAIL;
- savedV2=value;return ESP_OK;
+ savedV3=value;return ESP_OK;
 }
 int nvs_commit(nvs_handle_t){
  ++commits;const auto active=deskduo::runtime_display_settings();
- assert(active.mode==expectedDuringCommit.mode && active.language==expectedDuringCommit.language && active.brightnessPercent==expectedDuringCommit.brightnessPercent);
+ assert(active.mode==expectedDuringCommit.mode && active.language==expectedDuringCommit.language && active.brightnessPercent==expectedDuringCommit.brightnessPercent && active.brightnessAuto==expectedDuringCommit.brightnessAuto && active.brightnessDayStart==expectedDuringCommit.brightnessDayStart && active.brightnessNightStart==expectedDuringCommit.brightnessNightStart);
  return commitFails?ESP_FAIL:ESP_OK;
 }
 void nvs_close(nvs_handle_t){}
@@ -90,10 +99,10 @@ int main(){
  for(auto bad:{"{}",R"({"brightnessPercent":4})",R"({"brightnessPercent":101})",R"({"brightnessPercent":50.5})",R"({"brightnessPercent":true})",R"({"brightnessPercent":null})",R"({"brightnessPercent":"50"})",R"({"brightnessPercent":5,"brightnessPercent":100})",R"({"brightnessPercent":5,"x":1})",R"({"language":"de"})"}){
    const auto writes=preferenceWrites;assert(runtime_display_patch(bad)==400 && preferenceWrites==writes);check(CodexUsageMode::Weekly,Language::English,50);
  }
- auto patch=[&](const char* json,uint16_t encoded,CodexUsageMode mode,Language language,int percent){
+ auto patch=[&](const char* json,uint32_t encoded,CodexUsageMode mode,Language language,int percent){
    assert(savedPreference==2 && legacyMode==255);
  expectedDuringCommit=runtime_display_settings();auto writes=preferenceWrites,count=commits;
-   assert(runtime_display_patch(json)==204 && savedV2==encoded && preferenceWrites==writes+1 && commits==count+1);
+   assert(runtime_display_patch(json)==204 && savedV3==(encoded | (360u<<10) | (1080u<<21)) && preferenceWrites==writes+1 && commits==count+1);
    check(mode,language,percent);load(mode,language,percent);
  };
  patch(R"({"brightnessPercent":5})",23,CodexUsageMode::Weekly,Language::English,5);
@@ -102,16 +111,36 @@ int main(){
  patch(R"({"brightnessPercent":100,"language":"en","codexUsageMode":"weekly"})",403,CodexUsageMode::Weekly,Language::English,100);
  expectedDuringCommit=runtime_display_settings();auto writes=preferenceWrites,count=commits;
  openFails=true;assert(runtime_display_patch(R"({"brightnessPercent":50})")==503);openFails=false;
- assert(preferenceWrites==writes && commits==count && savedV2==403);check(CodexUsageMode::Weekly,Language::English,100);
+ assert(preferenceWrites==writes && commits==count && savedV3==(403u | (360u<<10) | (1080u<<21)));check(CodexUsageMode::Weekly,Language::English,100);
  setFails=true;assert(runtime_display_patch(R"({"brightnessPercent":50})")==503);setFails=false;
- assert(preferenceWrites==writes+1 && commits==count && savedV2==403);check(CodexUsageMode::Weekly,Language::English,100);
+ assert(preferenceWrites==writes+1 && commits==count && savedV3==(403u | (360u<<10) | (1080u<<21)));check(CodexUsageMode::Weekly,Language::English,100);
  commitFails=true;assert(runtime_display_patch(R"({"brightnessPercent":50,"language":"th","codexUsageMode":"both"})")==503);
- assert(savedV2==200);check(CodexUsageMode::Weekly,Language::English,100);
+ assert(savedV3==(200u | (360u<<10) | (1080u<<21)));check(CodexUsageMode::Weekly,Language::English,100);
  commitFails=false;load(CodexUsageMode::Both,Language::Thai,50);
+ // Exact unsigned high bits and every mode/language/Auto combination skip old reads.
+ for(int bits=0;bits<8;++bits){
+   savedV3= (1439u<<21) | (1438u<<10) | ((bits&4)?512u:0u) | (11u<<2) | (bits&3);
+   auto obsolete=v2Reads;v2ReadError=ESP_FAIL;
+   load(static_cast<CodexUsageMode>(bits&1),static_cast<Language>((bits>>1)&1),11);
+   auto active=runtime_display_settings();assert(active.brightnessAuto==bool(bits&4) && active.brightnessDayStart==1438 && active.brightnessNightStart==1439 && v2Reads==obsolete);
+ }
+ v2ReadError=ESP_OK;savedV2=43;
+ for(uint32_t invalid:{0u, (1440u<<21)|(360u<<10)|40u, (1080u<<21)|(1440u<<10)|40u, (360u<<21)|(360u<<10)|40u}){
+   savedV3=invalid;load(CodexUsageMode::Weekly,Language::English,10);
+   auto active=runtime_display_settings();assert(!active.brightnessAuto && active.brightnessDayStart==360 && active.brightnessNightStart==1080);
+ }
+ v3ReadError=ESP_ERR_NVS_TYPE_MISMATCH;load(CodexUsageMode::Weekly,Language::English,10);v3ReadError=ESP_OK;
+ savedV3.reset();load(CodexUsageMode::Weekly,Language::English,10);
+ expectedDuringCommit=runtime_display_settings();writes=preferenceWrites;count=commits;
+ assert(runtime_display_patch(R"({"brightnessAuto":true,"brightnessDayStart":"23:59","brightnessNightStart":"00:00","language":"th"})")==204);
+ assert(savedV3==((1439u<<10)|512u|41u) && preferenceWrites==writes+1 && commits==count+1);
+ runtime_init();assert(runtime_display_settings().brightnessAuto && runtime_display_settings().brightnessDayStart==1439 && runtime_display_settings().brightnessNightStart==0);
+ writes=preferenceWrites;assert(runtime_display_patch(R"({"brightnessNightStart":"23:59"})")==400 && preferenceWrites==writes);
+ savedV3.reset();v3ReadError=ESP_FAIL;bool fatal=false;try{runtime_init();}catch(int e){fatal=e==ESP_FAIL;}assert(fatal);v3ReadError=ESP_OK;
  // An artificial failed commit keeps active state old; immediate setter means
  // reboot sees the complete new triple, never a partial one.
  for(int boundary=0;boundary<3;++boundary){
-   savedV2.reset();savedPreference.reset();v2ReadError=boundary==0?ESP_FAIL:ESP_OK;
+   savedV3.reset();savedV2.reset();savedPreference.reset();v2ReadError=boundary==0?ESP_FAIL:ESP_OK;
    preferenceReadError=boundary==1?ESP_FAIL:ESP_OK;legacyReadError=boundary==2?ESP_FAIL:ESP_OK;
    writes=preferenceWrites;count=commits;bool failed=false;
    try{runtime_init();}catch(int error){failed=error==ESP_FAIL;}
@@ -128,5 +157,5 @@ int main(){
  runtime_weather({value,{}},view.generation+1);assert(runtime_weather_view().weather.stale);
  assert(reads==beforeDiagnosticReads && configBlob==original && blobWrites==0);
  assert(completeSerialization(runtime_config().config,original) && parseStoredConfig(original).value);
- std::cout<<"Production runtime: v2 u16 immediate single-write, exact 5/50/100 encoding, authoritative key skips obsolete reads, invalid/type fallback no writes, read errors remain fatal, reload, open/set/commit failure, coherent commit-before-publish, no tick NVS reads, config/secrets/calibration preserved\n";
+ std::cout<<"Production runtime: v3 u32 immediate single-write, exact 5/50/100 encoding, authoritative key skips obsolete reads, invalid/type fallback no writes, read errors remain fatal, reload, open/set/commit failure, coherent commit-before-publish, no tick NVS reads, config/secrets/calibration preserved\n";
 }

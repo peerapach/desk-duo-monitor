@@ -61,27 +61,34 @@ void runtime_init() {
     } else ESP_ERROR_CHECK(result == ESP_ERR_NVS_NOT_FOUND ? ESP_OK : result);
     // Setters write immediately on the pinned IDF; commit is not a multi-key
     // transaction. The wider authoritative scalar is never split across keys.
-    uint16_t savedV2 = 0;
-    result = nvs_get_u16(handle, "ui_pref_v2", &savedV2);
     auto preferenceRead = [](esp_err_t error) {
         ESP_ERROR_CHECK(error == ESP_ERR_NVS_NOT_FOUND || error == ESP_ERR_NVS_TYPE_MISMATCH ? ESP_OK : error);
     };
+    uint32_t savedV3 = 0;
+    result = nvs_get_u32(handle, "ui_pref_v3", &savedV3);
     preferenceRead(result);
-    const auto percent = savedV2 >> 2;
-    if (result == ESP_OK && percent >= 5 && percent <= 100)
-        displayPreference.initialize(static_cast<CodexUsageMode>(savedV2 & 1),
-            static_cast<Language>((savedV2 >> 1) & 1), static_cast<uint8_t>(percent));
+    const auto decoded = decodeDisplaySettings(savedV3);
+    if (result == ESP_OK && validDisplaySettings(decoded)) displayPreference.initialize(decoded);
     else {
-        uint8_t old = 0;
-        result = nvs_get_u8(handle, "ui_pref", &old);
+        uint16_t savedV2 = 0;
+        result = nvs_get_u16(handle, "ui_pref_v2", &savedV2);
         preferenceRead(result);
-        if (result == ESP_OK && old <= 3)
-            displayPreference.initialize(static_cast<CodexUsageMode>(old & 1), static_cast<Language>((old >> 1) & 1));
+        const auto percent = savedV2 >> 2;
+        if (result == ESP_OK && percent >= 5 && percent <= 100)
+            displayPreference.initialize(static_cast<CodexUsageMode>(savedV2 & 1),
+                static_cast<Language>((savedV2 >> 1) & 1), static_cast<uint8_t>(percent));
         else {
-            uint8_t legacy = 0;
-            result = nvs_get_u8(handle, "codex_layout", &legacy);
+            uint8_t old = 0;
+            result = nvs_get_u8(handle, "ui_pref", &old);
             preferenceRead(result);
-            displayPreference.initialize(result == ESP_OK && legacy <= 1 ? static_cast<CodexUsageMode>(legacy) : CodexUsageMode::Both);
+            if (result == ESP_OK && old <= 3)
+                displayPreference.initialize(static_cast<CodexUsageMode>(old & 1), static_cast<Language>((old >> 1) & 1));
+            else {
+                uint8_t legacy = 0;
+                result = nvs_get_u8(handle, "codex_layout", &legacy);
+                preferenceRead(result);
+                displayPreference.initialize(result == ESP_OK && legacy <= 1 ? static_cast<CodexUsageMode>(legacy) : CodexUsageMode::Both);
+            }
         }
     }
     nvs_close(handle);
@@ -126,8 +133,8 @@ int runtime_display_patch(const std::string& json) {
     return displayPreference.patch(json, [](const DisplaySettings& next) {
         nvs_handle_t handle;
         if (nvs_open("deskduo", NVS_READWRITE, &handle) != ESP_OK) return false;
-        const uint16_t encoded = (next.brightnessPercent << 2) | (static_cast<uint8_t>(next.language) << 1) | static_cast<uint8_t>(next.mode);
-        const bool ok = nvs_set_u16(handle, "ui_pref_v2", encoded) == ESP_OK && nvs_commit(handle) == ESP_OK;
+        const uint32_t encoded = encodeDisplaySettings(next);
+        const bool ok = nvs_set_u32(handle, "ui_pref_v3", encoded) == ESP_OK && nvs_commit(handle) == ESP_OK;
         nvs_close(handle);
         return ok;
     });
