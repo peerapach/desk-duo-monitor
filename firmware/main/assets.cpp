@@ -585,13 +585,13 @@ $('settings').addEventListener('submit',async e=>{
  }catch(err){put('status',()=>errorText(err));}
  finally{saving=false;$('settingsButton').disabled=!saved;}
 });load().catch(e=>put('status',()=>errorText(e)));
-let displayLoaded=false,displaySaved,displaySaving=false,displayInitialized=false;
+let displayLoaded=false,displaySaved,displaySaving=false;
 let displayEpoch=0,displayRequest,displayStatusKnown=false;
-// Editor reconciliation survives invalidated public saved claims. It never
-// establishes saved authority; only a valid actual GET can do that.
-let displayReconcile;
 const displayKeys=['codexUsageMode','language','brightnessPercent','brightnessAuto','brightnessDayStart','brightnessNightStart'];
 const editorValue=key=>key==='brightnessAuto'?$(key).checked:key==='brightnessPercent'?Number($(key).value):$(key).value;
+// Start with actual editor defaults so changes before the first valid GET also
+// survive. This private baseline never establishes public saved authority.
+let displayReconcile=Object.fromEntries(displayKeys.map(key=>[key,editorValue(key)]));
 const validTime=value=>typeof value==='string' && /^(?:[01][0-9]|2[0-3]):[0-5][0-9]$/.test(value);
 $('displayButton').disabled=true;
 function validDisplay(current){
@@ -603,11 +603,11 @@ function displayReadback(current,baseline){
  for(const key of displayKeys){
   // A refresh can update a clean editor only. Recheck after awaiting GET so
   // edits made while the request was in flight also survive.
-  if(!displayInitialized || (baseline && editorValue(key)===baseline[key])){
+  if(baseline && editorValue(key)===baseline[key]){
    if(key==='brightnessAuto')$(key).checked=current[key];else $(key).value=current[key];
   }
  }
- displaySaved=current;displayReconcile=current;displayInitialized=true;displayLoaded=true;displayStatusKnown=true;
+ displaySaved=current;displayReconcile=current;displayLoaded=true;displayStatusKnown=true;
  $('displayButton').disabled=displaySaving;applyLanguage($('language').value);languageReadback();
 }
 function languageReadback(){

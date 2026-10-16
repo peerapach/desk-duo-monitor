@@ -412,3 +412,22 @@ test('accepted POST rebases untouched concurrent fields, keeps later edits, and 
  assert.equal(p.get('brightnessDayStart').value,'08:30');assert.equal(p.get('codexUsageMode').value,'both');assert.equal(p.get('brightnessPercent').value,'80');assert.equal(p.get('brightnessNightStart').value,'21:45');assert.equal(p.get('language').value,'th');assert.equal(p.document.documentElement.lang,'th');assert.equal(p.get('weatherLabel').value,'Keep user data');assert.match(p.get('brightnessStored').textContent,/70%/);
  delete p.scenario.displayReply;await p.displaySubmit();assert.deepEqual(p.displayRequests[2],{brightnessPercent:70});assert.deepEqual(p.displayRequests[3],{language:'th',brightnessPercent:80,brightnessNightStart:'21:45'});assert.equal(p.displaySnapshot().brightnessDayStart,'08:30');
 });
+
+test('first valid recovery after failed or invalid initial GET preserves edited fields and rebases untouched ones',{timeout:30000},async()=>{
+ for(const initial of [{displayLoad:false},{display:{brightnessAuto:undefined}}]){
+  const p=await portal(initial);assert.equal(p.get('displayButton').disabled,true);
+  p.get('language').value='en';p.get('language').change();p.get('brightnessPercent').value='11';p.get('brightnessPercent').input();p.get('brightnessDayStart').value='07:15';p.get('brightnessDayStart').change();p.get('weatherLabel').value='Keep user data';
+  assert.equal(p.get('brightnessStored').textContent,'Saved brightness unknown');await p.displaySubmit();assert.equal(p.displayRequests.length,0);
+  p.setDisplay({...p.displaySnapshot(),brightnessAuto:true,brightnessNightStart:'20:30'});p.scenario.displayReply=async()=>({ok:true,json:async()=>p.displaySnapshot()});await p.pollDisplay();
+  assert.equal(p.get('language').value,'en');assert.equal(p.document.documentElement.lang,'en');assert.equal(p.get('brightnessPercent').value,'11');assert.equal(p.get('brightnessDayStart').value,'07:15');assert.equal(p.get('weatherLabel').value,'Keep user data');
+  assert.equal(p.get('codexUsageMode').value,'weekly');assert.equal(p.get('brightnessAuto').checked,true);assert.equal(p.get('brightnessNightStart').value,'20:30');assert.equal(p.get('displayButton').disabled,false);assert.match(p.get('brightnessStored').textContent,/100%.*Not saved/);
+  await p.displaySubmit();assert.deepEqual(p.displayRequests,[{language:'en',brightnessPercent:11,brightnessDayStart:'07:15'}]);
+ }
+});
+test('edits during the first pending GET survive valid readback and the next save stays sparse',{timeout:30000},async()=>{
+ let finish;const p=await portal({display:{brightnessAuto:true,brightnessNightStart:'20:30'},displayReply:()=>new Promise(resolve=>finish=resolve)});
+ assert.equal(p.get('displayButton').disabled,true);p.get('language').value='en';p.get('language').change();p.get('brightnessPercent').value='11';p.get('brightnessPercent').input();p.get('brightnessDayStart').value='07:15';p.get('brightnessDayStart').change();
+ finish({ok:true,json:async()=>p.displaySnapshot()});await new Promise(resolve=>setImmediate(resolve));
+ assert.equal(p.get('language').value,'en');assert.equal(p.document.documentElement.lang,'en');assert.equal(p.get('brightnessPercent').value,'11');assert.equal(p.get('brightnessDayStart').value,'07:15');assert.equal(p.get('brightnessNightStart').value,'20:30');assert.equal(p.get('brightnessAuto').checked,true);assert.equal(p.get('codexUsageMode').value,'weekly');assert.equal(p.get('displayButton').disabled,false);assert.equal(p.displayRequests.length,0);
+ delete p.scenario.displayReply;await p.displaySubmit();assert.deepEqual(p.displayRequests,[{language:'en',brightnessPercent:11,brightnessDayStart:'07:15'}]);
+});

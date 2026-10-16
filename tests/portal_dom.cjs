@@ -19,6 +19,8 @@ async function open(options={}){
   window.fetch=async(url,request={})=>{
    if(url==='/api/display'){
     if(request.method){const patch=JSON.parse(request.body);posts.push(patch);if(!scenario.saveFails)Object.assign(display,patch);return {ok:!scenario.saveFails,status:scenario.saveFails?503:204};}
+    if(scenario.firstDisplayPending && !displayLoads++){return await new Promise(resolve=>window.releaseInitialDisplay=()=>resolve({ok:true,json:async()=>({...display})}));}
+    if(scenario.initialDisplayFails && !displayLoads)throw Error('initial display failure');
     if(++displayLoads>1 && scenario.reloadFails)throw Error('private readback failure');
     return {ok:true,json:async()=>({...display})};
    }
@@ -34,7 +36,7 @@ async function open(options={}){
    throw Error('Unexpected fetch '+url);
   };
  },options);
- await page.setContent(html);await page.waitForFunction(()=>document.getElementById('displayStatus').textContent || !document.getElementById('displayButton').disabled);
+ await page.setContent(html);await page.waitForFunction(()=>window.releaseInitialDisplay || document.getElementById('displayStatus').textContent || !document.getElementById('displayButton').disabled);
  return page;
 }
 test('actual portal DOM previews both languages, reads back independent saves, and preserves form data',{timeout:30000},async()=>{
@@ -187,4 +189,23 @@ test('actual DOM rebases clean concurrent schedule after POST, keeps pending edi
  await page.locator('#brightnessPercent').fill('80');await page.locator('#brightnessPercent').dispatchEvent('input');await page.locator('#brightnessNightStart').fill('21:45');await page.locator('#language').selectOption('th');await page.locator('#weatherLabel').fill('Keep user data');await page.evaluate(()=>releaseReadback());await page.waitForFunction(()=>!document.getElementById('displayButton').disabled);
  assert.equal(await page.locator('#brightnessDayStart').inputValue(),'08:30');assert.equal(await page.locator('#codexUsageMode').inputValue(),'both');assert.equal(await page.locator('#brightnessPercent').inputValue(),'80');assert.equal(await page.locator('#brightnessNightStart').inputValue(),'21:45');assert.equal(await page.locator('html').getAttribute('lang'),'th');assert.equal(await page.locator('#weatherLabel').inputValue(),'Keep user data');assert.match(await page.locator('#brightnessStored').textContent(),/70%/);
  await page.locator('#displayButton').click();await page.waitForFunction(()=>posts.length===4&&!document.getElementById('displayButton').disabled);assert.deepEqual(await page.evaluate(()=>posts[2]),{brightnessPercent:70});assert.deepEqual(await page.evaluate(()=>posts[3]),{language:'th',brightnessPercent:80,brightnessNightStart:'21:45'});assert.equal(await page.evaluate(()=>display.brightnessDayStart),'08:30');await page.close();
+});
+
+test('actual DOM preserves edits and locale on first valid recovery after initial failure or invalid readback',{timeout:30000},async()=>{
+ for(const initial of [{initialDisplayFails:true},{display:{brightnessAuto:null}}]){
+  const page=await open(initial);assert.equal(await page.locator('#displayButton').isDisabled(),true);
+  await page.locator('#language').selectOption('en');await page.locator('#brightnessPercent').fill('11');await page.locator('#brightnessPercent').dispatchEvent('input');await page.locator('#brightnessDayStart').fill('07:15');await page.locator('#weatherLabel').fill('Keep user data');
+  assert.equal(await page.locator('#brightnessStored').textContent(),'Saved brightness unknown');await page.evaluate(()=>document.getElementById('display').requestSubmit());assert.deepEqual(await page.evaluate(()=>posts),[]);
+  await page.evaluate(async()=>{scenario.initialDisplayFails=false;Object.assign(display,{brightnessAuto:true,brightnessNightStart:'20:30'});await displayPollers.shift()();});
+  assert.equal(await page.locator('#language').inputValue(),'en');assert.equal(await page.locator('html').getAttribute('lang'),'en');assert.equal(await page.locator('#brightnessPercent').inputValue(),'11');assert.equal(await page.locator('#brightnessDayStart').inputValue(),'07:15');assert.equal(await page.locator('#weatherLabel').inputValue(),'Keep user data');
+  assert.equal(await page.locator('#codexUsageMode').inputValue(),'weekly');assert.equal(await page.locator('#brightnessAuto').isChecked(),true);assert.equal(await page.locator('#brightnessNightStart').inputValue(),'20:30');assert.equal(await page.locator('#displayButton').isDisabled(),false);assert.match(await page.locator('#brightnessStored').textContent(),/100%.*Not saved/);
+  await page.locator('#displayButton').click();await page.waitForFunction(()=>posts.length===1&&!document.getElementById('displayButton').disabled);assert.deepEqual(await page.evaluate(()=>posts),[{language:'en',brightnessPercent:11,brightnessDayStart:'07:15'}]);await page.close();
+ }
+});
+test('actual DOM preserves edits made during the first pending GET and then saves only those fields',{timeout:30000},async()=>{
+ const page=await open({firstDisplayPending:true,display:{brightnessAuto:true,brightnessNightStart:'20:30'}});assert.equal(await page.locator('#displayButton').isDisabled(),true);
+ await page.locator('#language').selectOption('en');await page.locator('#brightnessPercent').fill('11');await page.locator('#brightnessPercent').dispatchEvent('input');await page.locator('#brightnessDayStart').fill('07:15');
+ await page.evaluate(()=>releaseInitialDisplay());await page.waitForFunction(()=>!document.getElementById('displayButton').disabled);
+ assert.equal(await page.locator('#language').inputValue(),'en');assert.equal(await page.locator('html').getAttribute('lang'),'en');assert.equal(await page.locator('#brightnessPercent').inputValue(),'11');assert.equal(await page.locator('#brightnessDayStart').inputValue(),'07:15');assert.equal(await page.locator('#brightnessNightStart').inputValue(),'20:30');assert.equal(await page.locator('#brightnessAuto').isChecked(),true);assert.equal(await page.locator('#codexUsageMode').inputValue(),'weekly');assert.deepEqual(await page.evaluate(()=>posts),[]);
+ await page.locator('#displayButton').click();await page.waitForFunction(()=>posts.length===1&&!document.getElementById('displayButton').disabled);assert.deepEqual(await page.evaluate(()=>posts),[{language:'en',brightnessPercent:11,brightnessDayStart:'07:15'}]);await page.close();
 });
