@@ -67,6 +67,10 @@ def main() -> int:
                            str(ROOT / "firmware/main/weather_diagnostics.cpp"),
                            str(ROOT / "tests/weather_connect_test.cpp"), str(cjson_object), "-o", str(connect)])
     run([str(connect)])
+    backlight = output / "backlight_test"
+    run(compiler("c++") + ["-std=c++17", "-Wall", "-Wextra", "-Werror", "-I", str(ROOT / "tests/backlight_sdk"),
+                           str(ROOT / "firmware/main/backlight.cpp"), str(ROOT / "tests/backlight_test.cpp"), "-o", str(backlight)])
+    run([str(backlight)])
     runtime = output / "runtime_display_test"
     run(compiler("c++") + ["-std=c++17", "-Wall", "-Wextra", "-Werror", "-I", str(ROOT / "tests/runtime_sdk"), "-I", str(sdk),
                            str(ROOT / "firmware/main/core.cpp"), str(ROOT / "firmware/main/runtime.cpp"),

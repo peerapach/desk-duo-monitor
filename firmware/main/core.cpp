@@ -946,8 +946,16 @@ ParseResult<DisplayPatch> parseDisplayPreference(const std::string& json) {
     if (!cJSON_IsObject(root) || !root->child) return {std::nullopt, "display"};
     DisplayPatch patch;
     for (const auto* item = root->child; item; item = item->next) {
-        if (!item->string || !cJSON_IsString(item)) return {std::nullopt, "display"};
-        const std::string key = item->string, value = item->valuestring;
+        if (!item->string) return {std::nullopt, "display"};
+        const std::string key = item->string;
+        if (key == "brightnessPercent" && !patch.brightnessPercent) {
+            int64_t percent = 0;
+            if (!readInteger(item, 5, 100, percent)) return {std::nullopt, "display"};
+            patch.brightnessPercent = static_cast<uint8_t>(percent);
+            continue;
+        }
+        if (!cJSON_IsString(item)) return {std::nullopt, "display"};
+        const std::string value = item->valuestring;
         if (key == "codexUsageMode" && !patch.mode) {
             if (value == "both") patch.mode = CodexUsageMode::Both;
             else if (value == "weekly") patch.mode = CodexUsageMode::Weekly;

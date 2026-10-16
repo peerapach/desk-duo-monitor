@@ -19,7 +19,7 @@ extern "C" void app_main() {
     deskduo::runtime_init();
     lv_init();
     lv_tick_set_cb([]() -> uint32_t { return deskduo::now_ms(); });
-    deskduo::display_init(); deskduo::input_init(); deskduo::ui_init();
+    deskduo::display_init(deskduo::runtime_display_settings().brightnessPercent); deskduo::input_init(); deskduo::ui_init();
     deskduo::network_init(); deskduo::portal_init();
     ESP_ERROR_CHECK(xTaskCreate(deskduo::network_task, "sources", 12288, nullptr, 4, nullptr) == pdPASS ? ESP_OK : ESP_ERR_NO_MEM);
     // This is the only task allowed to call LVGL, including timer_handler.

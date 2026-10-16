@@ -614,8 +614,11 @@ int main(int argc, char** argv) {
             CHECK(preference.patch(bad,[&](const deskduo::DisplaySettings&){++writes;return true;}) == 400);
         }
         CHECK(writes == 0);
+        CHECK(preference.patch(R"({"brightnessPercent":5})",[&](const deskduo::DisplaySettings&){++writes;return true;}) == 204);
+
         CHECK(preference.patch(R"({"codexUsageMode":"weekly"})",[&](const deskduo::DisplaySettings& next){++writes;CHECK(next.mode == Mode::Weekly);CHECK(preference.get() == Mode::Both);return false;}) == 503);
         CHECK(preference.get() == Mode::Both);
+        CHECK(preference.settings().brightnessPercent == 5);
         CHECK(preference.patch(R"({"codexUsageMode":"weekly"})",[&](const deskduo::DisplaySettings& next){++writes;CHECK(next.mode == Mode::Weekly);CHECK(preference.get() == Mode::Both);return true;}) == 204);
         CHECK(preference.get() == Mode::Weekly);
         CHECK(preference.patch(R"({"codexUsageMode":"both"})",[&](const deskduo::DisplaySettings&){CHECK(preference.get() == Mode::Weekly);return true;}) == 204);

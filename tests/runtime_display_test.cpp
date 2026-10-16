@@ -7,6 +7,8 @@
 namespace {
 std::string configBlob;
 std::optional<uint8_t> savedPreference;
+std::optional<uint16_t> savedV2;
+int v2Reads=0,v2ReadError=ESP_OK;
 uint8_t legacyMode=0;
 int preferenceWrites=0,blobWrites=0,commits=0,reads=0,legacyReads=0;
 int preferenceReadError=ESP_OK,legacyReadError=ESP_OK;
@@ -28,15 +30,21 @@ int nvs_get_u8(nvs_handle_t,const char* key,uint8_t* value){
  if(!savedPreference)return ESP_ERR_NVS_NOT_FOUND;
  *value=*savedPreference;return ESP_OK;
 }
-int nvs_set_u8(nvs_handle_t,const char* key,uint8_t value){
- ++preferenceWrites;assert(std::string(key)=="ui_pref" && value<=3);
+int nvs_set_u8(nvs_handle_t,const char*,uint8_t){assert(false && "old keys immutable");return ESP_FAIL;}
+int nvs_get_u16(nvs_handle_t,const char* key,uint16_t* value){
+ ++reads;++v2Reads;assert(std::string(key)=="ui_pref_v2");
+ if(v2ReadError!=ESP_OK)return v2ReadError;
+ if(!savedV2)return ESP_ERR_NVS_NOT_FOUND;
+ *value=*savedV2;return ESP_OK;
+}
+int nvs_set_u16(nvs_handle_t,const char* key,uint16_t value){
+ ++preferenceWrites;assert(std::string(key)=="ui_pref_v2");
  if(setFails)return ESP_FAIL;
- // Pinned IDF writes on set; commit is not a transaction that rolls it back.
- savedPreference=value;return ESP_OK;
+ savedV2=value;return ESP_OK;
 }
 int nvs_commit(nvs_handle_t){
  ++commits;const auto active=deskduo::runtime_display_settings();
- assert(active.mode==expectedDuringCommit.mode && active.language==expectedDuringCommit.language);
+ assert(active.mode==expectedDuringCommit.mode && active.language==expectedDuringCommit.language && active.brightnessPercent==expectedDuringCommit.brightnessPercent);
  return commitFails?ESP_FAIL:ESP_OK;
 }
 void nvs_close(nvs_handle_t){}
@@ -50,55 +58,67 @@ int main(){
  auto cfg=defaultConfig();cfg.ssid="preserved-wifi";cfg.wifiPassword="secret-wifi";cfg.usageToken="0123456789abcdef";cfg.setupPassword="secret-admin";
  cfg.touch.minX=294;cfg.touch.maxX=3766;cfg.touch.minY=248;cfg.touch.maxY=3632;cfg.touch.invertX=true;
  configBlob=serializeConfig(cfg);const auto original=configBlob;
- runtime_init();assert(runtime_display_mode()==CodexUsageMode::Both && runtime_language()==Language::Thai && preferenceWrites==0 && blobWrites==0 && commits==0);
+ auto check=[&](CodexUsageMode mode,Language language,int brightness){
+   const auto active=runtime_display_settings();assert(active.mode==mode && active.language==language && active.brightnessPercent==brightness);
+ };
+ auto load=[&](CodexUsageMode mode,Language language,int brightness){
+   const auto writes=preferenceWrites,commitCount=commits;
+   runtime_init();check(mode,language,brightness);
+   assert(preferenceWrites==writes && commits==commitCount && configBlob==original && blobWrites==0);
+ };
+ load(CodexUsageMode::Both,Language::Thai,100);assert(v2Reads==1);
  const auto initialReads=reads;for(int i=0;i<20;++i){runtime_display_settings();runtime_language();runtime_snapshot();}assert(reads==initialReads);
- for(auto bad:{"{}",R"({"language":"de"})",R"({"language":0})",R"({"language":null})",R"({"language":"en","language":"th"})",R"({"language":"th","x":1})",R"({"language":"en","codexUsageMode":false})",R"({"codexUsageMode":"bad"})"})assert(runtime_display_patch(bad)==400);
- assert(preferenceWrites==0);
- assert(runtime_display_patch(R"({"language":"en"})")==204 && savedPreference==2);
- assert(runtime_display_mode()==CodexUsageMode::Both && runtime_language()==Language::English && legacyMode==0);
- runtime_init();assert(runtime_language()==Language::English);
- expectedDuringCommit={CodexUsageMode::Both,Language::English};
- assert(runtime_display_patch(R"({"codexUsageMode":"weekly"})")==204 && savedPreference==3);
- assert(runtime_display_mode()==CodexUsageMode::Weekly && runtime_language()==Language::English && legacyMode==0);
- runtime_init();assert(runtime_display_mode()==CodexUsageMode::Weekly && runtime_language()==Language::English);
- expectedDuringCommit={CodexUsageMode::Weekly,Language::English};
- auto beforeCommits=commits,beforeWrites=preferenceWrites;
- setFails=true;assert(runtime_display_patch(R"({"codexUsageMode":"both","language":"th"})")==503);
- setFails=false;assert(commits==beforeCommits && preferenceWrites==beforeWrites+1 && savedPreference==3);
- runtime_init();assert(runtime_display_mode()==CodexUsageMode::Weekly && runtime_language()==Language::English);
- openFails=true;assert(runtime_display_patch(R"({"language":"th"})")==503);openFails=false;
- assert(runtime_language()==Language::English && savedPreference==3);
- // An artificial commit failure must not publish active state. The pinned SDK
- // may already have durably set the entire scalar, so reboot sees the whole
- // new pair; it can never see a mixed language/mode combination.
- commitFails=true;beforeWrites=preferenceWrites;
- assert(runtime_display_patch(R"({"codexUsageMode":"both","language":"th"})")==503);
- assert(runtime_display_mode()==CodexUsageMode::Weekly && runtime_language()==Language::English && savedPreference==0 && preferenceWrites==beforeWrites+1);
- commitFails=false;runtime_init();assert(runtime_display_mode()==CodexUsageMode::Both && runtime_language()==Language::Thai);
- expectedDuringCommit={CodexUsageMode::Both,Language::Thai};beforeWrites=preferenceWrites;
- assert(runtime_display_patch(R"({"codexUsageMode":"weekly","language":"en"})")==204 && savedPreference==3 && preferenceWrites==beforeWrites+1);
- assert(runtime_display_mode()==CodexUsageMode::Weekly && runtime_language()==Language::English);
- assert(configBlob==original && blobWrites==0 && legacyMode==0);
- savedPreference.reset();legacyMode=1;beforeWrites=preferenceWrites;beforeCommits=commits;
- runtime_init();assert(runtime_display_mode()==CodexUsageMode::Weekly && runtime_language()==Language::Thai && beforeWrites==preferenceWrites && beforeCommits==commits);
- savedPreference=255;runtime_init();assert(runtime_display_mode()==CodexUsageMode::Weekly && runtime_language()==Language::Thai && savedPreference==255 && beforeWrites==preferenceWrites);
- // A stored value with a different NVS type is invalid preference data,
- // not a fatal storage operation; the legacy layout is only a fallback.
- preferenceReadError=ESP_ERR_NVS_TYPE_MISMATCH;beforeWrites=preferenceWrites;beforeCommits=commits;
- try{runtime_init();}catch(int error){std::cerr<<"Stored preference type unexpectedly fatal: "<<error<<"\n";assert(false);}
- assert(runtime_language()==Language::Thai && runtime_display_mode()==CodexUsageMode::Weekly);
- assert(preferenceWrites==beforeWrites && commits==beforeCommits && configBlob==original && blobWrites==0);
- preferenceReadError=ESP_OK;savedPreference=2;legacyMode=255;const auto oldLegacyReads=legacyReads;
- runtime_init();assert(runtime_display_mode()==CodexUsageMode::Both && runtime_language()==Language::English && legacyReads==oldLegacyReads);
- assert(preferenceWrites==beforeWrites && commits==beforeCommits && configBlob==original && blobWrites==0);
- // Genuine read failures must reach the existing SDK fatal-check boundary.
- preferenceReadError=ESP_FAIL;bool storageFailure=false;
- try{runtime_init();}catch(int error){storageFailure=error==ESP_FAIL;}
- assert(storageFailure && legacyReads==oldLegacyReads && preferenceWrites==beforeWrites && commits==beforeCommits);
- preferenceReadError=ESP_OK;savedPreference.reset();legacyMode=1;legacyReadError=ESP_FAIL;storageFailure=false;
- try{runtime_init();}catch(int error){storageFailure=error==ESP_FAIL;}
- assert(storageFailure && preferenceWrites==beforeWrites && commits==beforeCommits && configBlob==original && blobWrites==0);
- legacyReadError=ESP_OK;runtime_init();assert(completeSerialization(runtime_config().config,original));
+ for(int old=0;old<=3;++old){savedPreference=old;load(static_cast<CodexUsageMode>(old&1),static_cast<Language>(old>>1),100);}
+ savedPreference.reset();legacyMode=1;load(CodexUsageMode::Weekly,Language::Thai,100);
+ savedPreference=255;load(CodexUsageMode::Weekly,Language::Thai,100);
+ preferenceReadError=ESP_ERR_NVS_TYPE_MISMATCH;load(CodexUsageMode::Weekly,Language::Thai,100);
+ preferenceReadError=ESP_OK;legacyMode=255;load(CodexUsageMode::Both,Language::Thai,100);
+ legacyReadError=ESP_ERR_NVS_TYPE_MISMATCH;load(CodexUsageMode::Both,Language::Thai,100);legacyReadError=ESP_OK;
+ for(uint16_t invalid:{uint16_t(0),uint16_t(19),uint16_t(404),uint16_t(65535)}){
+   savedV2=invalid;savedPreference=2;load(CodexUsageMode::Both,Language::English,100);
+ }
+ v2ReadError=ESP_ERR_NVS_TYPE_MISMATCH;load(CodexUsageMode::Both,Language::English,100);v2ReadError=ESP_OK;
+ // Valid v2 must bypass even operational failures in obsolete keys.
+ savedV2=203;preferenceReadError=ESP_FAIL;legacyReadError=ESP_FAIL;
+ auto oldReads=legacyReads;load(CodexUsageMode::Weekly,Language::English,50);assert(oldReads==legacyReads);
+ for(int percent:{5,50,100})for(int bits=0;bits<4;++bits){
+   savedV2=(percent<<2)|bits;
+   load(static_cast<CodexUsageMode>(bits&1),static_cast<Language>(bits>>1),percent);
+ }
+ savedV2=203;load(CodexUsageMode::Weekly,Language::English,50);
+ preferenceReadError=ESP_OK;legacyReadError=ESP_OK;
+ for(auto bad:{"{}",R"({"brightnessPercent":4})",R"({"brightnessPercent":101})",R"({"brightnessPercent":50.5})",R"({"brightnessPercent":true})",R"({"brightnessPercent":null})",R"({"brightnessPercent":"50"})",R"({"brightnessPercent":5,"brightnessPercent":100})",R"({"brightnessPercent":5,"x":1})",R"({"language":"de"})"}){
+   const auto writes=preferenceWrites;assert(runtime_display_patch(bad)==400 && preferenceWrites==writes);check(CodexUsageMode::Weekly,Language::English,50);
+ }
+ auto patch=[&](const char* json,uint16_t encoded,CodexUsageMode mode,Language language,int percent){
+   assert(savedPreference==2 && legacyMode==255);
+ expectedDuringCommit=runtime_display_settings();auto writes=preferenceWrites,count=commits;
+   assert(runtime_display_patch(json)==204 && savedV2==encoded && preferenceWrites==writes+1 && commits==count+1);
+   check(mode,language,percent);load(mode,language,percent);
+ };
+ patch(R"({"brightnessPercent":5})",23,CodexUsageMode::Weekly,Language::English,5);
+ patch(R"({"language":"th"})",21,CodexUsageMode::Weekly,Language::Thai,5);
+ patch(R"({"codexUsageMode":"both"})",20,CodexUsageMode::Both,Language::Thai,5);
+ patch(R"({"brightnessPercent":100,"language":"en","codexUsageMode":"weekly"})",403,CodexUsageMode::Weekly,Language::English,100);
+ expectedDuringCommit=runtime_display_settings();auto writes=preferenceWrites,count=commits;
+ openFails=true;assert(runtime_display_patch(R"({"brightnessPercent":50})")==503);openFails=false;
+ assert(preferenceWrites==writes && commits==count && savedV2==403);check(CodexUsageMode::Weekly,Language::English,100);
+ setFails=true;assert(runtime_display_patch(R"({"brightnessPercent":50})")==503);setFails=false;
+ assert(preferenceWrites==writes+1 && commits==count && savedV2==403);check(CodexUsageMode::Weekly,Language::English,100);
+ commitFails=true;assert(runtime_display_patch(R"({"brightnessPercent":50,"language":"th","codexUsageMode":"both"})")==503);
+ assert(savedV2==200);check(CodexUsageMode::Weekly,Language::English,100);
+ commitFails=false;load(CodexUsageMode::Both,Language::Thai,50);
+ // An artificial failed commit keeps active state old; immediate setter means
+ // reboot sees the complete new triple, never a partial one.
+ for(int boundary=0;boundary<3;++boundary){
+   savedV2.reset();savedPreference.reset();v2ReadError=boundary==0?ESP_FAIL:ESP_OK;
+   preferenceReadError=boundary==1?ESP_FAIL:ESP_OK;legacyReadError=boundary==2?ESP_FAIL:ESP_OK;
+   writes=preferenceWrites;count=commits;bool failed=false;
+   try{runtime_init();}catch(int error){failed=error==ESP_FAIL;}
+   assert(failed && preferenceWrites==writes && commits==count);
+ }
+ v2ReadError=preferenceReadError=legacyReadError=ESP_OK;legacyMode=0;load(CodexUsageMode::Both,Language::Thai,100);
+ assert(savedPreference==std::nullopt && legacyMode==0 && completeSerialization(runtime_config().config,original));
  // Diagnostic data keeps the existing source-generation admission behavior.
  const auto beforeDiagnosticReads=reads;
  auto view=runtime_weather_view();assert(view.generation==runtime_config().generation && !view.configured && !view.weather.data);
@@ -108,5 +128,5 @@ int main(){
  runtime_weather({value,{}},view.generation+1);assert(runtime_weather_view().weather.stale);
  assert(reads==beforeDiagnosticReads && configBlob==original && blobWrites==0);
  assert(completeSerialization(runtime_config().config,original) && parseStoredConfig(original).value);
- std::cout<<"Production runtime: packed scalar single-write, authoritative key ignores invalid legacy, type mismatch defaults Thai/no write, read errors remain fatal, reload, open/set/commit failure, coherent commit-before-publish, no tick NVS reads, config/secrets/calibration preserved\n";
+ std::cout<<"Production runtime: v2 u16 immediate single-write, exact 5/50/100 encoding, authoritative key skips obsolete reads, invalid/type fallback no writes, read errors remain fatal, reload, open/set/commit failure, coherent commit-before-publish, no tick NVS reads, config/secrets/calibration preserved\n";
 }

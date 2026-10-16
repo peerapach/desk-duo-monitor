@@ -31,7 +31,7 @@ void display_flush(int x1, int y1, int x2, int y2, uint8_t* data) {
     gpio_set_level(GPIO_NUM_15, 0); gpio_set_level(GPIO_NUM_2, 1);
     write(data, count * 2); gpio_set_level(GPIO_NUM_15, 1);
 }
-void display_init() {
+void display_init(uint8_t brightnessPercent) {
     gpio_config_t pins{}; pins.pin_bit_mask = (1ULL << 15) | (1ULL << 2) | (1ULL << 21); pins.mode = GPIO_MODE_OUTPUT;
     ESP_ERROR_CHECK(gpio_config(&pins)); gpio_set_level(GPIO_NUM_15, 1); gpio_set_level(GPIO_NUM_21, 0);
     spi_bus_config_t bus{};
@@ -58,6 +58,6 @@ void display_init() {
     lv_display_set_flush_cb(display, [](lv_display_t* d, const lv_area_t* area, uint8_t* data) {
         display_flush(area->x1,area->y1,area->x2,area->y2,data); lv_display_flush_ready(d);
     });
-    gpio_set_level(GPIO_NUM_21, 1);
+    ESP_ERROR_CHECK(backlight_init(brightnessPercent));
 }
 }

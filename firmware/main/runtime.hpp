@@ -22,17 +22,17 @@ inline bool completeSerialization(const Config& expected, const std::string& jso
 }
 // The caller serializes writers; readers never perform NVS I/O.
 class DisplayPreference {
-    // One atomic publication keeps the language and usage mode coherent.
-    std::atomic<uint8_t> settings_{0};
+    // One scalar keeps the complete display preference coherent.
+    std::atomic<uint16_t> settings_{100 << 2};
 public:
     DisplaySettings settings() const {
         const auto value = settings_.load();
-        return {static_cast<CodexUsageMode>(value & 1), static_cast<Language>((value >> 1) & 1)};
+        return {static_cast<CodexUsageMode>(value & 1), static_cast<Language>((value >> 1) & 1), static_cast<uint8_t>(value >> 2)};
     }
     CodexUsageMode get() const { return settings().mode; }
     Language language() const { return settings().language; }
-    void initialize(CodexUsageMode mode, Language language = Language::Thai) {
-        settings_.store(static_cast<uint8_t>(mode) | (static_cast<uint8_t>(language) << 1));
+    void initialize(CodexUsageMode mode, Language language = Language::Thai, uint8_t brightnessPercent = 100) {
+        settings_.store(static_cast<uint16_t>(brightnessPercent << 2) | (static_cast<uint8_t>(language) << 1) | static_cast<uint8_t>(mode));
     }
     template<typename Persist> int patch(const std::string& json, Persist persist) {
         auto parsed = parseDisplayPreference(json);
@@ -40,8 +40,9 @@ public:
         auto next = settings();
         if (parsed.value->mode) next.mode = *parsed.value->mode;
         if (parsed.value->language) next.language = *parsed.value->language;
+        if (parsed.value->brightnessPercent) next.brightnessPercent = *parsed.value->brightnessPercent;
         if (!persist(next)) return 503;
-        initialize(next.mode, next.language);
+        initialize(next.mode, next.language, next.brightnessPercent);
         return 204;
     }
 };

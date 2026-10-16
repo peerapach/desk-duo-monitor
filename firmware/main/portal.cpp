@@ -55,7 +55,7 @@ esp_err_t route(httpd_req_t* request) {
             const auto settings = runtime_display_settings();
             return respond(request, 200, std::string("{\"codexUsageMode\":\"") +
                 (settings.mode == CodexUsageMode::Weekly ? "weekly" : "both") + "\",\"language\":\"" +
-                (settings.language == Language::English ? "en" : "th") + "\"}");
+                (settings.language == Language::English ? "en" : "th") + "\",\"brightnessPercent\":" + std::to_string(settings.brightnessPercent) + "}");
         }
         if (path == "/api/network") return respond(request, 200, network_diagnostics_json());
         if (path == "/api/touch") return respond(request, 200, input_diagnostics_json());
