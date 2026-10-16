@@ -22,7 +22,8 @@ const char* brightness_phase_name(BrightnessPhase phase) {
     return "clock_wait";
 }
 std::string brightness_time_string(uint16_t minute) {
-    char text[6]; std::snprintf(text, sizeof(text), "%02u:%02u", unsigned(minute / 60), unsigned(minute % 60));
+    // uint16_t also permits 1092:15; keep the full argument domain bounded.
+    char text[8]; std::snprintf(text, sizeof(text), "%02u:%02u", unsigned(minute / 60), unsigned(minute % 60));
     return text;
 }
 }

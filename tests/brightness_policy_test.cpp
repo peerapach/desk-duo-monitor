@@ -6,6 +6,8 @@
 #include <limits>
 using namespace deskduo;
 int main(){
+ struct TimeCase{uint16_t minute;const char* expected;};
+ for(const auto& value:{TimeCase{0,"00:00"},{59,"00:59"},{60,"01:00"},{359,"05:59"},{360,"06:00"},{435,"07:15"},{1080,"18:00"},{1439,"23:59"}})assert(brightness_time_string(value.minute)==value.expected);
  setenv("TZ","ICT-7",1);tzset();
  auto epoch=[](int minute){ std::tm local{};local.tm_year=126;local.tm_mon=9;local.tm_mday=16;local.tm_hour=minute/60;local.tm_min=minute%60;return std::mktime(&local); };
  DisplaySettings s;s.brightnessPercent=11;

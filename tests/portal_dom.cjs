@@ -170,3 +170,21 @@ test('actual Auto DOM rejects stale GET after accepted POST, recovers unknown sn
  await page.locator('#language').selectOption('th');assert.match(await page.locator('#brightnessEffective').textContent(),/ไม่ทราบ/);
  await page.evaluate(async()=>{scenario.reloadFails=false;await displayPollers.shift()();});assert.match(await page.locator('#brightnessEffective').textContent(),/100%/);assert.equal(await page.locator('#brightnessPercent').inputValue(),'51');await page.close();
 });
+
+test('actual DOM rebases clean concurrent schedule after POST, keeps pending editors, and preserves sparse next save',{timeout:30000},async()=>{
+ const page=await open({language:'en'});
+ await page.evaluate(()=>{display.brightnessDayStart='07:15';});await page.locator('#brightnessPercent').fill('50');await page.locator('#brightnessPercent').dispatchEvent('input');await page.locator('#displayButton').click();await page.waitForFunction(()=>posts.length===1&&!document.getElementById('displayButton').disabled);
+ assert.deepEqual(await page.evaluate(()=>posts),[{brightnessPercent:50}]);assert.equal(await page.locator('#brightnessDayStart').inputValue(),'07:15');assert.doesNotMatch(await page.locator('#brightnessScheduleStored').textContent(),/Not saved/);
+ await page.locator('#brightnessPercent').fill('60');await page.locator('#brightnessPercent').dispatchEvent('input');await page.locator('#displayButton').click();await page.waitForFunction(()=>posts.length===2&&!document.getElementById('displayButton').disabled);assert.deepEqual(await page.evaluate(()=>posts[1]),{brightnessPercent:60});assert.equal(await page.evaluate(()=>display.brightnessDayStart),'07:15');
+ await page.evaluate(()=>{
+  Object.assign(display,{brightnessDayStart:'08:30',brightnessNightStart:'20:00',codexUsageMode:'both'});const previous=fetch;let delay=true;
+  window.fetch=async(url,request={})=>{
+   if(url==='/api/display'&&!request.method&&delay){delay=false;return new Promise(resolve=>window.releaseReadback=()=>resolve({ok:true,json:async()=>({...display})}));}
+   return previous(url,request);
+  };
+ });
+ await page.locator('#brightnessPercent').fill('70');await page.locator('#brightnessPercent').dispatchEvent('input');await page.locator('#displayButton').click();await page.waitForFunction(()=>document.getElementById('brightnessStored').textContent==='Saved brightness unknown');assert.equal(await page.locator('#displayButton').isDisabled(),true);
+ await page.locator('#brightnessPercent').fill('80');await page.locator('#brightnessPercent').dispatchEvent('input');await page.locator('#brightnessNightStart').fill('21:45');await page.locator('#language').selectOption('th');await page.locator('#weatherLabel').fill('Keep user data');await page.evaluate(()=>releaseReadback());await page.waitForFunction(()=>!document.getElementById('displayButton').disabled);
+ assert.equal(await page.locator('#brightnessDayStart').inputValue(),'08:30');assert.equal(await page.locator('#codexUsageMode').inputValue(),'both');assert.equal(await page.locator('#brightnessPercent').inputValue(),'80');assert.equal(await page.locator('#brightnessNightStart').inputValue(),'21:45');assert.equal(await page.locator('html').getAttribute('lang'),'th');assert.equal(await page.locator('#weatherLabel').inputValue(),'Keep user data');assert.match(await page.locator('#brightnessStored').textContent(),/70%/);
+ await page.locator('#displayButton').click();await page.waitForFunction(()=>posts.length===4&&!document.getElementById('displayButton').disabled);assert.deepEqual(await page.evaluate(()=>posts[2]),{brightnessPercent:70});assert.deepEqual(await page.evaluate(()=>posts[3]),{language:'th',brightnessPercent:80,brightnessNightStart:'21:45'});assert.equal(await page.evaluate(()=>display.brightnessDayStart),'08:30');await page.close();
+});

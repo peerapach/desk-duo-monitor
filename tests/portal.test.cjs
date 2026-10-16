@@ -396,3 +396,19 @@ test('unknown hardware fields do not invalidate saved six fields or render objec
   assert.equal(p.get('displayButton').disabled,false);assert.match(p.get('brightnessStored').textContent,/100%/);assert.match(p.get('brightnessEffective').textContent,/Unknown$/);
  }
 });
+
+test('accepted POST rebases untouched concurrent fields, keeps later edits, and next saves stay sparse',{timeout:30000},async()=>{
+ const p=await portal({language:'en'});
+ p.setDisplay({...p.displaySnapshot(),brightnessDayStart:'07:15'});
+ p.get('brightnessPercent').value='50';p.get('brightnessPercent').input();await p.displaySubmit();
+ assert.deepEqual(p.displayRequests,[{brightnessPercent:50}]);assert.match(p.get('brightnessScheduleStored').textContent,/07:15/);assert.equal(p.get('brightnessDayStart').value,'07:15');assert.doesNotMatch(p.get('brightnessScheduleStored').textContent,/Not saved/);
+ p.get('brightnessPercent').value='60';p.get('brightnessPercent').input();await p.displaySubmit();assert.deepEqual(p.displayRequests[1],{brightnessPercent:60});assert.equal(p.displaySnapshot().brightnessDayStart,'07:15');
+ let finish;p.scenario.displayReply=()=>new Promise(resolve=>finish=resolve);
+ p.setDisplay({...p.displaySnapshot(),brightnessDayStart:'08:30',brightnessNightStart:'20:00',codexUsageMode:'both'});
+ p.get('brightnessPercent').value='70';p.get('brightnessPercent').input();const saving=p.displaySubmit();await new Promise(resolve=>setImmediate(resolve));
+ assert.equal(p.get('brightnessStored').textContent,'Saved brightness unknown');assert.equal(p.get('displayButton').disabled,true);
+ p.get('brightnessPercent').value='80';p.get('brightnessPercent').input();p.get('brightnessNightStart').value='21:45';p.get('brightnessNightStart').change();p.get('language').value='th';p.get('language').change();p.get('weatherLabel').value='Keep user data';
+ finish({ok:true,json:async()=>p.displaySnapshot()});await saving;
+ assert.equal(p.get('brightnessDayStart').value,'08:30');assert.equal(p.get('codexUsageMode').value,'both');assert.equal(p.get('brightnessPercent').value,'80');assert.equal(p.get('brightnessNightStart').value,'21:45');assert.equal(p.get('language').value,'th');assert.equal(p.document.documentElement.lang,'th');assert.equal(p.get('weatherLabel').value,'Keep user data');assert.match(p.get('brightnessStored').textContent,/70%/);
+ delete p.scenario.displayReply;await p.displaySubmit();assert.deepEqual(p.displayRequests[2],{brightnessPercent:70});assert.deepEqual(p.displayRequests[3],{language:'th',brightnessPercent:80,brightnessNightStart:'21:45'});assert.equal(p.displaySnapshot().brightnessDayStart,'08:30');
+});

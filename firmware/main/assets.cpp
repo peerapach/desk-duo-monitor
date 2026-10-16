@@ -587,6 +587,9 @@ $('settings').addEventListener('submit',async e=>{
 });load().catch(e=>put('status',()=>errorText(e)));
 let displayLoaded=false,displaySaved,displaySaving=false,displayInitialized=false;
 let displayEpoch=0,displayRequest,displayStatusKnown=false;
+// Editor reconciliation survives invalidated public saved claims. It never
+// establishes saved authority; only a valid actual GET can do that.
+let displayReconcile;
 const displayKeys=['codexUsageMode','language','brightnessPercent','brightnessAuto','brightnessDayStart','brightnessNightStart'];
 const editorValue=key=>key==='brightnessAuto'?$(key).checked:key==='brightnessPercent'?Number($(key).value):$(key).value;
 const validTime=value=>typeof value==='string' && /^(?:[01][0-9]|2[0-3]):[0-5][0-9]$/.test(value);
@@ -604,7 +607,7 @@ function displayReadback(current,baseline){
    if(key==='brightnessAuto')$(key).checked=current[key];else $(key).value=current[key];
   }
  }
- displaySaved=current;displayInitialized=true;displayLoaded=true;displayStatusKnown=true;
+ displaySaved=current;displayReconcile=current;displayInitialized=true;displayLoaded=true;displayStatusKnown=true;
  $('displayButton').disabled=displaySaving;applyLanguage($('language').value);languageReadback();
 }
 function languageReadback(){
@@ -627,7 +630,7 @@ async function loadDisplay(){
  // is allowed to finish but loses publication authority when a save starts.
  if(displayRequest){try{await displayRequest;}catch(_){} }
  if(displayRequest)return loadDisplay();
- const epoch=displayEpoch,baseline=displaySaved;
+ const epoch=displayEpoch,baseline=displayReconcile;
  const controller=new AbortController();const timeout=setTimeout(()=>controller.abort(),4000);
  const request=(async()=>{
   const r=await fetch('/api/display',{cache:'no-store',signal:controller.signal});
@@ -661,7 +664,9 @@ $('display').addEventListener('submit',async e=>{
   ++displayEpoch;displaySaving=true;$('displayButton').disabled=true;put('displayStatus',()=>t("กำลังบันทึก..."));
   const r=await fetch('/api/display',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(patch)});
   if(!r.ok)throw issue(()=>r.status===503?t("ยังบันทึกไม่ได้ กรุณาลองอีกครั้ง"):t("ตรวจสอบค่า / สิทธิ์ (HTTP ")+r.status+')');
-  displayLoaded=false;displaySaved=undefined;languageReadback();
+  // Submitted values are clean after acceptance, but edits made during POST
+  // or its GET remain dirty against this private request-time baseline.
+  displayReconcile=selected;displayLoaded=false;displaySaved=undefined;languageReadback();
   try{await loadDisplay();}catch(_){put('displayStatus',()=>t("บันทึกแล้ว แต่โหลดการแสดงผลไม่สำเร็จ กรุณาโหลดหน้าใหม่"));return;}
   put('displayStatus',()=>t("บันทึกการแสดง usage แล้ว"));
  }catch(err){put('displayStatus',()=>errorText(err));}
