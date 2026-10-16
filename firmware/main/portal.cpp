@@ -9,6 +9,7 @@
 #include "ota_policy.hpp"
 #include "esp_http_server.h"
 #include <cstring>
+#include <string_view>
 namespace deskduo {
 namespace {
 std::string header(httpd_req_t* request, const char* name, std::size_t cap) {
@@ -18,7 +19,7 @@ std::string header(httpd_req_t* request, const char* name, std::size_t cap) {
     if (httpd_req_get_hdr_value_str(request, name, value.data(), value.size()) != ESP_OK) return {};
     value.resize(length); return value;
 }
-esp_err_t respond(httpd_req_t* request, int status, const std::string& body = "") {
+esp_err_t respond(httpd_req_t* request, int status, std::string_view body = "") {
     const char* text = "500 Internal Server Error";
     switch (status) {
         case 200: text = "200 OK"; break;

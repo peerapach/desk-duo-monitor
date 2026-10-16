@@ -1,4 +1,5 @@
 #include "../firmware/main/ota.hpp"
+#include "../firmware/main/assets.hpp"
 #include "../firmware/main/ota_policy.hpp"
 #include "../firmware/main/portal.hpp"
 #include "../firmware/main/input.hpp"
@@ -8,8 +9,28 @@
 #include <vector>
 #include <ctime>
 #include <cstdlib>
+#include <new>
+#include <limits>
 #include "ota_image_fixture.hpp"
 #include "esp_image_format.h"
+namespace {
+size_t allocationLimit=std::numeric_limits<size_t>::max();
+size_t deniedAllocation=0;
+struct AllocationLimit {
+    explicit AllocationLimit(size_t limit) { allocationLimit=limit;deniedAllocation=0; }
+    ~AllocationLimit() { allocationLimit=std::numeric_limits<size_t>::max(); }
+};
+}
+void* operator new(size_t size) {
+    if(size>=allocationLimit) {deniedAllocation=size;throw std::bad_alloc();}
+    if(auto* memory=std::malloc(size?size:1))return memory;
+    throw std::bad_alloc();
+}
+void* operator new[](size_t size) {return ::operator new(size);}
+void operator delete(void* memory) noexcept {std::free(memory);}
+void operator delete[](void* memory) noexcept {std::free(memory);}
+void operator delete(void* memory,size_t) noexcept {std::free(memory);}
+void operator delete[](void* memory,size_t) noexcept {std::free(memory);}
 namespace {
 time_t routeEpoch=0;
 std::optional<uint8_t> appliedPercent;
@@ -45,9 +66,9 @@ size_t httpd_req_get_hdr_value_len(httpd_req_t* r,const char* name){return r->ex
 int httpd_req_get_hdr_value_str(httpd_req_t* r,const char* name,char* out,size_t n){auto& s=r->exchange->headers[name];if(n<=s.size())return ESP_FAIL;std::memcpy(out,s.c_str(),s.size()+1);return ESP_OK;}
 int httpd_req_recv(httpd_req_t* r,char* out,size_t n){auto& e=*r->exchange;++e.reads;n=std::min({n,size_t(257),e.body.size()-e.offset});std::memcpy(out,e.body.data()+e.offset,n);e.offset+=n;++clockMs;return n;}
 int httpd_resp_set_status(httpd_req_t* r,const char* s){r->exchange->status=s;return ESP_OK;}
-int httpd_resp_set_type(httpd_req_t*,const char*){return ESP_OK;}
-int httpd_resp_set_hdr(httpd_req_t*,const char*,const char*){return ESP_OK;}
-int httpd_resp_send(httpd_req_t* r,const char* s,size_t n){r->exchange->response.assign(s,n);return ESP_OK;}
+int httpd_resp_set_type(httpd_req_t* r,const char* type){r->exchange->contentType=type;return ESP_OK;}
+int httpd_resp_set_hdr(httpd_req_t* r,const char* name,const char* value){r->exchange->responseHeaders[name]=value;return ESP_OK;}
+int httpd_resp_send(httpd_req_t* r,const char* s,size_t n){if(r->exchange->sendResult!=ESP_OK)return r->exchange->sendResult;r->exchange->response.assign(s,n);return ESP_OK;}
 int httpd_resp_sendstr(httpd_req_t* r,const char* s){return httpd_resp_send(r,s,std::strlen(s));}
 int httpd_req_async_handler_begin(httpd_req_t* r,httpd_req_t** out){if(asyncFail)return ESP_FAIL;*out=new httpd_req_t(*r);r->exchange->for_async_req=true;++asyncCount;return ESP_OK;}
 int httpd_req_async_handler_complete(httpd_req_t* r){r->exchange->for_async_req=false;delete r;++completed;return ESP_OK;}
@@ -71,7 +92,6 @@ void vTaskDelete(void*){throw TaskExit{};}
 void vTaskDelay(int ticks){clockMs+=ticks;}
 void esp_restart(){throw Reboot{};}
 namespace deskduo {
-extern const char portal_html[]="test page";
 std::optional<uint8_t> backlight_last_applied_percent(){return appliedPercent;}
 RequestConfig runtime_config(){auto c=defaultConfig();c.setupPassword="test-admin";c.usageToken="test-usage-token-123";c.ssid="saved-network";c.wifiPassword="test-wifi-secret";c.weather.url="https://weather.test/data?key=test-query-secret";c.weather.headers={{"X-Key","test-header-secret"}};return {c,0};}
 DisplayPreference displayPreference;
@@ -90,6 +110,35 @@ int main(int argc,char**){
     using namespace deskduo;
     portal_init();assert(routes.count({"/api/network",HTTP_GET}) && !routes.count({"/api/network",HTTP_POST}));assert(routes.size()==10);
     assert(serverConfig.max_uri_handlers==10 && serverConfig.max_open_sockets==4 && serverConfig.lru_purge_enable);
+    // A full embedded page must remain available without page-sized application heap.
+    const auto pageBytes=std::strlen(portal_html);
+    {
+        auto e=exchange();auto r=request(e,"/",HTTP_GET);
+        e.response.reserve(pageBytes); // Fake transport storage is outside the measured dispatch.
+        int result=ESP_FAIL;
+        try {AllocationLimit limit(pageBytes);result=dispatch(r);}
+        catch(const std::bad_alloc&) {
+            std::cerr<<"Root route attempted allocation of "<<deniedAllocation
+                     <<" bytes with page-sized allocation limit "<<pageBytes<<"\n";
+            return 1;
+        }
+        assert(result==ESP_OK && e.status=="200 OK" && e.response==portal_html);
+        assert(e.contentType=="text/html; charset=utf-8" && e.reads==0);
+        assert(e.responseHeaders.at("Content-Security-Policy")=="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
+        assert(e.responseHeaders.at("X-Content-Type-Options")=="nosniff");
+        assert(e.responseHeaders.at("Cache-Control")=="no-store");
+        std::cout<<"Full embedded root body ("<<pageBytes<<" bytes) served under allocation limit\n";
+    }
+    for(auto credential:{"","Bearer test-usage-token-123","Basic wrong"}) {
+        auto e=exchange();e.headers["Authorization"]=credential;auto r=request(e,"/",HTTP_GET);
+        assert(dispatch(r)==ESP_FAIL && e.status=="401 Unauthorized" && e.response.empty());
+        assert(e.responseHeaders.at("WWW-Authenticate")=="Basic realm=\"Desk Duo\"");
+    }
+    // A successful status must not swallow transport failure for HTML or temporary JSON.
+    for(auto path:{"/","/api/network","/api/display"}) {
+        auto e=exchange();e.sendResult=-77;auto r=request(e,path,HTTP_GET);
+        assert(dispatch(r)==-77 && e.status=="200 OK");
+    }
     for(auto method:{HTTP_GET,HTTP_POST}){
       for(auto credential:{"","Bearer test-usage-token-123","Basic wrong"}){
         auto e=exchange();e.headers["Authorization"]=credential;auto r=request(e,"/api/display",method);
@@ -131,7 +180,7 @@ int main(int argc,char**){
         auto e=exchange();auto r=request(e,"/api/display",HTTP_GET);
         assert(dispatch(r)==ESP_OK && e.response==R"({"codexUsageMode":"both","language":"th","brightnessPercent":100,"brightnessAuto":false,"brightnessDayStart":"06:00","brightnessNightStart":"18:00","brightnessTargetPercent":100,"brightnessEffectivePercent":null,"brightnessPhase":"manual"})");
         e=exchange();e.headers["Content-Type"]="application/json";e.body=R"({"codexUsageMode":"weekly"})";r=request(e,"/api/display");
-        assert(dispatch(r)==ESP_OK && e.status=="204 No Content");
+        assert(dispatch(r)==ESP_OK && e.status=="204 No Content" && e.response.empty());
         e=exchange();r=request(e,"/api/display",HTTP_GET);
         assert(dispatch(r)==ESP_OK && e.response==R"({"codexUsageMode":"weekly","language":"th","brightnessPercent":100,"brightnessAuto":false,"brightnessDayStart":"06:00","brightnessNightStart":"18:00","brightnessTargetPercent":100,"brightnessEffectivePercent":null,"brightnessPhase":"manual"})");
         displaySave=false;e=exchange();e.headers["Content-Type"]="application/json";e.body=R"({"codexUsageMode":"both"})";r=request(e,"/api/display");
@@ -229,7 +278,7 @@ int main(int argc,char**){
     auto bad=exchange();bad.body.resize(1000);auto upload=request(bad);upload.content_len=8192;
     assert(dispatch(upload)==ESP_OK && ota_busy() && bad.reads==0);
     {auto e=exchange();auto r=request(e);const auto beforeWrites=displayWrites;assert(dispatch(r)==ESP_FAIL && e.status=="503 Service Unavailable" && !e.reads && displayWrites==beforeWrites);}
-    {auto e=exchange();auto r=request(e,"/api/config");assert(dispatch(r)==ESP_FAIL && e.status=="503 Service Unavailable" && patches==0 && !e.reads);}
+    {auto e=exchange();auto r=request(e,"/api/config");assert(dispatch(r)==ESP_FAIL && e.status=="503 Service Unavailable" && e.response=="Firmware maintenance busy; retry shortly" && patches==0 && !e.reads);}
     {auto e=exchange();auto r=request(e,"/api/display");assert(dispatch(r)==ESP_FAIL && e.status=="503 Service Unavailable" && !e.reads);}
     {auto e=exchange();auto r=request(e,"/api/network",HTTP_GET);assert(dispatch(r)==ESP_OK && e.response==network_diagnostics_json() && !e.reads);}
     {auto e=exchange();auto r=request(e,"/api/firmware",HTTP_GET);assert(dispatch(r)==ESP_OK && e.response.find("\"busy\":true")!=std::string::npos && e.response.find("ota_0")!=std::string::npos);}

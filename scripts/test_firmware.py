@@ -90,7 +90,7 @@ def main() -> int:
     run([str(ota)])
     routes = output / "ota_routes_test"
     run(compiler("c++") + ["-std=c++17", "-Wall", "-Wextra", "-Werror", "-I", str(ROOT / "tests/ota_sdk"), "-I", str(sdk),
-                           str(ROOT / "firmware/main/core.cpp"), str(ROOT / "firmware/main/ota.cpp"), str(ROOT / "firmware/main/portal.cpp"), str(ROOT / "firmware/main/brightness_policy.cpp"),
+                           str(ROOT / "firmware/main/core.cpp"), str(ROOT / "firmware/main/ota.cpp"), str(ROOT / "firmware/main/portal.cpp"), str(ROOT / "firmware/main/assets.cpp"), str(ROOT / "firmware/main/brightness_policy.cpp"),
                            str(ROOT / "tests/ota_routes_test.cpp"), str(cjson_object), "-o", str(routes)])
     run([str(routes)])
     run([str(routes), "--idle-capacity"])
