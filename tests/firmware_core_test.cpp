@@ -649,7 +649,7 @@ int main(int argc, char** argv) {
         CHECK(deskduo::bodyPolicy(1, "application/jsonp", 8192) == 415);
         // Every spelling accepted by config/redirect policy must select verified
         // TLS and require a usable clock; a case-sensitive test leaks HTTP bytes.
-        for (const std::string& url : {"https://one.test/data", "HTTPS://one.test/data?accessToken=private", "HtTpS://one.test/data"}) {
+        for (const std::string url : {"https://one.test/data", "HTTPS://one.test/data?accessToken=private", "HtTpS://one.test/data"}) {
             auto configured = deskduo::applyConfigPatch(deskduo::defaultConfig(),
                 "{\"weather\":{\"url\":\"" + url + "\"}}");
             CHECK(configured.value.has_value());
@@ -671,7 +671,7 @@ int main(int argc, char** argv) {
         CHECK(deskduo::transportPolicy("HTTP://one.test/data", 0).mayConnect);
         // Root-relative targets replace the old path/query, including pathless
         // origins whose query itself contains slashes or another complete URL.
-        for (const std::string& from : {
+        for (const std::string from : {
             "https://one.test?accessToken=private",
             "https://one.test?next=/old/path",
             "https://one.test?next=https://other.test/path",
