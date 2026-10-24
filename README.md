@@ -1,51 +1,102 @@
 # Desk Duo
 
-จอคู่หูบนโต๊ะสำหรับ **Claude + Codex usage, อากาศ และหุ้นไทย/US** บน ESP32 จอแนวตั้ง 240×320 พื้นดำ พร้อม Web Admin ภาษาไทย/English และอัปเดต firmware ผ่าน Wi-Fi
+An ESP32 desk companion for **Claude & Codex usage, weather, and Thai/US stocks**, with a portrait display, bilingual web admin, and Wi-Fi firmware updates.
 
-Mac ส่ง usage จาก CodexBar hooks เท่านั้น ส่วน ESP32 ดึงอากาศและหุ้นจากแหล่งข้อมูลที่ตั้งไว้โดยตรง ไม่ต้องมี Raspberry Pi หรือ server กลาง
+Your Mac sends AI usage through CodexBar hooks. The ESP32 fetches weather and stock data directly from configured sources—no Raspberry Pi or central server required.
 
-## ฟีเจอร์
+## Screenshots
 
-- Claude / Codex พร้อมตัวละครเคลื่อนไหว เปอร์เซ็นต์ usage และเวลา reset แยกตามช่วง
-- Codex เลือก 5h + Weekly หรือ Weekly อย่างเดียวผ่านเว็บ
-- อากาศและพยากรณ์ พร้อมภาพกลางวัน กลางคืน และฝน
-- หุ้นไทย/US จาก Yahoo Finance พร้อมกราฟเล็ก หรือ JSON endpoint / Google Sheets
-- Web Admin: Display, AI usage, Weather, Stocks, Wi-Fi, Firmware
-- TH/EN, ปรับความสว่างจากจอและเว็บ และตารางแสงกลางวัน/กลางคืนโดยใช้ค่าที่ตั้งเป็นฐาน
-- OTA แบบ application-only พร้อม boot rollback และรักษาค่าตั้งค่าเดิม
+![Desk Duo screens showing Claude and Codex usage, Bangkok weather, and Thai/US stocks](docs/images/desk-duo-preview.png)
 
-## เริ่มใช้งาน
+**Duo · Weather · Stocks** — actual LVGL UI rendered with sample data from firmware **2.2.3**. These are simulator captures, not device photographs or live market readings. See [image provenance](docs/images/README.md).
 
-1. ใช้บอร์ด **ESP32-2432S028R (CYD)** จอ ILI9341 / flash 4 MiB / ไม่มี PSRAM
-2. [Build และติดตั้ง firmware](firmware/README.md) ทาง USB ครั้งแรก
-3. เชื่อม AP `DeskDuo-xxxxxx` เปิด `http://192.168.4.1` เพื่อตั้ง Wi-Fi และเก็บรหัส admin / usage token จากหน้า Setup
-4. [ตั้ง CodexBar hooks](docs/codexbar.md) บน Mac เพื่อส่ง Claude และ Codex
-5. ตั้งอากาศ หุ้น ภาษา และความสว่างจาก Web Admin ที่ IP ของบอร์ด
+| Duo | Weather | Stocks |
+| --- | --- | --- |
+| Claude and Codex usage, separate windows, and reset times | Current conditions, day/night artwork, and the next three hours | Thai/US quotes, small charts, and Today / 5 days controls |
 
-บอร์ดที่ตั้งค่าแล้วให้อัปเดต OTA ด้วย `desk-duo-app.bin` ดูรายละเอียด migration และการรักษา NVS ในคู่มือ firmware
+## Features
 
-## โครงสร้าง repository
+- **AI usage:** animated Claude and Codex identities, usage percentages, and reset times for each window.
+- **Codex display modes:** show both windows, such as 5h + Weekly, or select Weekly only in the web admin. Available windows depend on the source account.
+- **Weather:** current conditions and forecasts with daytime, nighttime, and rain artwork.
+- **Stocks:** Thai and US symbols through Yahoo Finance, with sparklines; custom JSON endpoints and Google Sheets are also supported.
+- **Web admin:** Display, AI usage, Weather, Stocks, Wi-Fi, and Firmware sections.
+- **Thai / English:** selectable interface language on the display and in the web admin.
+- **Brightness:** device and web controls, with configurable day/night schedules based on the saved brightness setting.
+- **Wi-Fi OTA:** application-only updates, boot rollback, and preserved settings.
 
-| ที่อยู่ | หน้าที่ |
+## Hardware
+
+- **ESP32-2432S028R (CYD / Cheap Yellow Display)**
+- ILI9341 240×320 display in portrait orientation
+- 4 MiB flash; no PSRAM required
+
+Firmware uses ESP-IDF and LVGL. Pin assignments and flashing instructions are documented in the [firmware guide](firmware/README.md).
+
+## Getting started
+
+### 1. Build and install the firmware
+
+Install Python 3.9+ and Git, then run from the repository root:
+
+```sh
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements-build.txt
+.venv/bin/python scripts/pio.py run -d firmware -e cyd
+.venv/bin/python scripts/package_firmware.py
+```
+
+Generated firmware packages are written to `artifacts/`. Follow the [firmware guide](firmware/README.md) for the initial USB installation and migration from older flash layouts.
+
+For a configured device, use **`desk-duo-app.bin`** for Wi-Fi OTA updates. Do not overwrite an existing configuration with a merged initial-install image.
+
+### 2. Connect the display
+
+1. Join the device's `DeskDuo-xxxxxx` Wi-Fi access point.
+2. Open `http://192.168.4.1` and enter your Wi-Fi settings.
+3. Find the admin password and usage bearer token on the device's Setup page.
+4. Once connected, open the device's LAN IP to configure weather, stocks, language, brightness, and display preferences.
+
+### 3. Connect CodexBar
+
+The Mac bridge uses Python's standard library and does **not** require the CodexBar CLI.
+
+Test event normalization without contacting a device:
+
+```sh
+python3 bridge/codexbar_sender.py --dry-run < examples/usage-event.json
+```
+
+Copy [the bridge config example](examples/bridge-config.example.json) to a private location, fill in your device endpoint and token, and configure CodexBar hooks using [the hook example](examples/codexbar-hooks.example.json). Use absolute executable and script paths in the hook settings.
+
+See the [CodexBar setup guide](docs/codexbar.md) for configuration details. Weather and stock requests stay on the ESP32.
+
+## Repository layout
+
+| Path | Purpose |
 | --- | --- |
-| `firmware/` | ESP-IDF / LVGL, Web Admin, ภาพและฟอนต์ |
-| `bridge/` | Python sender สำหรับ CodexBar hooks |
-| `integrations/google-sheets/` | Apps Script สำหรับ JSON endpoint ทางเลือก |
-| `examples/` | Config และ response ตัวอย่าง ไม่มีค่าของบอร์ดจริง |
-| `scripts/` | Build, package, migrate และสร้าง assets |
-| `tests/` | Python, Node, portable C++ และตัวเรนเดอร์ LVGL |
-| `docs/` | คู่มือ protocol, การพัฒนา และสถานะงาน |
-| `docs/superpowers/` | แผน/แบบในอดีต ไม่ใช่สถานะปัจจุบัน |
+| `firmware/` | ESP-IDF / LVGL firmware, embedded web admin, artwork, and fonts |
+| `bridge/` | Python sender for CodexBar hook events |
+| `integrations/google-sheets/` | Optional Apps Script JSON endpoint |
+| `examples/` | Sample configuration and response fixtures |
+| `scripts/` | Build, packaging, migration, and asset tools |
+| `tests/` | Python, Node, portable C++, and native LVGL UI tests |
+| `docs/` | Setup, protocol, development, and project status |
+| `docs/superpowers/` | Historical design notes and plans |
 
-## คู่มือ
+## Documentation
 
 - [CodexBar hooks](docs/codexbar.md)
-- [หุ้นไทย/US และกราฟ](docs/stocks.md)
-- [Protocol และ JSON fields](docs/protocol.md)
-- [การพัฒนาและการทดสอบ](docs/development.md)
-- [เตรียม push ขึ้น GitHub](docs/github.md)
-- [สถานะปัจจุบันและงานถัดไป](docs/status.md)
+- [Thai/US stocks and charts](docs/stocks.md)
+- [Protocol and JSON fields](docs/protocol.md)
+- [Development and tests](docs/development.md)
+- [GitHub publishing](docs/github.md)
+- [Current status and planned work](docs/status.md)
 
-เก็บ config ส่วนตัวนอก repo หรือใช้ชื่อ `*.local.json` ที่ถูก ignore แล้ว ไม่ใส่รหัส Wi-Fi, admin password หรือ usage token ใน source ตัวอย่าง
+Some detailed guides are currently written in Thai. The [status page](docs/status.md) distinguishes delivered firmware from pending UI changes; screenshots above show the delivered 2.2.3 layout.
 
-Generated assets ถูกเก็บพร้อม source จึง build firmware ได้โดยไม่ต้องสร้างภาพ/ฟอนต์ใหม่ ดู [asset pipeline](firmware/assets/README.md) และ [third-party notices](THIRD_PARTY_NOTICES.md) สำหรับที่มาและใบอนุญาตของส่วนประกอบ โปรเจกต์ยังไม่ได้เลือกใบอนุญาตสำหรับโค้ดที่เขียนเพิ่ม
+## Configuration and assets
+
+Keep private configuration outside the repository or in ignored `*.local.json` files. Never commit Wi-Fi passwords, admin passwords, or usage tokens. The files under `examples/` contain sample values only.
+
+Generated image and font sources are checked in, so building the firmware does not require regenerating artwork. See the [asset pipeline](firmware/assets/README.md) and [third-party notices](THIRD_PARTY_NOTICES.md) for provenance and component licenses. A license for the project's original code has not yet been selected.
