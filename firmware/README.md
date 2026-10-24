@@ -2,7 +2,7 @@
 
 For Thai/US stocks and sparklines, see the [Yahoo Finance guide](../docs/stocks.md). Existing JSON endpoint settings remain valid and are not switched to another provider automatically.
 
-Desk Duo 2.2.3 targets ESP32-2432S028R / ESP32-D0WD-V3 with 4 MiB flash, no PSRAM, and a 240×320 display. It uses LVGL 9.2.2 and ESP-IDF 5.5.3 through espressif32 6.13.0. Local-network OTA uses Basic administrator authentication and boot rollback. Build and native tests do not establish physical-device behavior or live-source accuracy.
+Desk Duo 2.2.4 targets ESP32-2432S028R / ESP32-D0WD-V3 with 4 MiB flash, no PSRAM, and a 240×320 display. It uses LVGL 9.2.2 and ESP-IDF 5.5.3 through espressif32 6.13.0. Local-network OTA uses Basic administrator authentication and boot rollback. Build and native tests do not establish physical-device behavior or live-source accuracy.
 
 ## Build and test on macOS
 
@@ -133,7 +133,7 @@ Thai font/shaping integration originated in tamaclaude; generated fonts and thei
 
 ## OTA and USB migration while preserving settings
 
-Dual OTA was introduced in 2.0.0 and remains in 2.2.3:
+Dual OTA was introduced in 2.0.0 and remains in 2.2.4:
 
 | Partition | Offset | Size |
 | --- | --- | --- |
