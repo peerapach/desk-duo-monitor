@@ -75,7 +75,7 @@ same verified transport. These fields are public readback metadata, are included
 in NVS roundtrip verification and source generation identity, and are rejected on
 weather sources. See [stock setup and percentage semantics](stocks.md).
 
-The UI uses Bangkok time and displays unknown time when SNTP has not established a usable clock. Display age is monotonic receipt age, not proof of a current Sheet quote. Mac usage and ESP32 weather/stocks remain independent. These receiver paths have target-build and portable-policy verification; device/network integration remains pending.
+The UI uses Bangkok time and displays unknown time when SNTP has not established a usable clock. Display age is monotonic receipt age, not proof of a current Sheet quote. Mac usage and ESP32 weather/stocks remain independent.
 
 
 ### Weather presentation fields

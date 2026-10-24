@@ -82,7 +82,6 @@ See the [CodexBar setup guide](docs/codexbar.md) for configuration details. Weat
 | `scripts/` | Build, packaging, migration, and asset tools |
 | `tests/` | Python, Node, portable C++, and native LVGL UI tests |
 | `docs/` | Setup, protocol, development, and project status |
-| `docs/superpowers/` | Historical design notes and plans |
 
 ## Documentation
 
@@ -90,10 +89,8 @@ See the [CodexBar setup guide](docs/codexbar.md) for configuration details. Weat
 - [Thai/US stocks and charts](docs/stocks.md)
 - [Protocol and JSON fields](docs/protocol.md)
 - [Development and tests](docs/development.md)
-- [GitHub publishing](docs/github.md)
-- [Current status and planned work](docs/status.md)
 
-Some detailed guides are currently written in Thai. The [status page](docs/status.md) distinguishes delivered firmware from pending UI changes; screenshots above show the delivered 2.2.3 layout.
+Some detailed guides are currently written in Thai.
 
 ## Configuration and assets
 

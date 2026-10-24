@@ -130,7 +130,7 @@ rtk proxy .venv/bin/python scripts/migrate_ota.py
 rtk proxy .venv/bin/python scripts/migrate_ota.py --port PORT --flash
 ```
 
-**เจ้าของบอร์ดนี้ระบุไม่ให้สร้าง backup ใหม่** ใช้ override นี้ตามที่สั่ง; tool ไม่เรียก `read_flash` และไม่สร้าง backup:
+หากตั้งใจข้ามการสร้าง backup ให้ใช้ `--skip-backup`; ในโหมดนี้ tool ไม่เรียก `read_flash` และไม่สร้าง backup:
 
 ```sh
 rtk proxy .venv/bin/python scripts/migrate_ota.py --port PORT --flash --skip-backup
