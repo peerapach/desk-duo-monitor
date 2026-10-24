@@ -90,8 +90,6 @@ See the [CodexBar setup guide](docs/codexbar.md) for configuration details. Weat
 - [Protocol and JSON fields](docs/protocol.md)
 - [Development and tests](docs/development.md)
 
-Some detailed guides are currently written in Thai.
-
 ## Configuration and assets
 
 Keep private configuration outside the repository or in ignored `*.local.json` files. Never commit Wi-Fi passwords, admin passwords, or usage tokens. The files under `examples/` contain sample values only.

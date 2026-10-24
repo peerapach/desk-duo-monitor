@@ -1,63 +1,63 @@
-# Stocks endpoint สำหรับ Google Sheets
+# Google Sheets stock endpoint
 
-สคริปต์ `Code.gs` อ่านตารางหุ้นจาก Google Sheet แล้วส่ง JSON สำหรับ ESP32 โดยไม่ต้องให้บอร์ดอ่าน Sheet โดยตรง ข้อมูลราคาใน Sheet ต้องมาจากการกรอกหรือแหล่งข้อมูลอื่นเอง การดึงข้อมูลอัตโนมัติและการยืนยันว่าราคาเป็นราคาตลาดล่าสุดยังไม่อยู่ในขอบเขตนี้
+`Code.gs` reads a stock table from Google Sheets and returns JSON for the ESP32. The device does not read the Sheet directly. Prices must be entered manually or supplied by another source. This integration does not fetch quotes automatically or establish that prices are current market prices.
 
-## รูปแบบ Sheet
+## Sheet format
 
-แถวแรกต้องเป็น header โดยต้องมี `symbol` และ `price` ชื่อ header ไม่แยกตัวพิมพ์เล็ก/ใหญ่และตัดช่องว่างหัวท้ายก่อนจับคู่ คอลัมน์อื่นที่ไม่รู้จักจะถูกมองข้าม
+The first row must contain headers, including `symbol` and `price`. Header matching is case-insensitive and trims leading/trailing whitespace. Unknown columns are ignored.
 
-| Header | จำเป็น | ความหมาย |
+| Header | Required | Meaning |
 | --- | --- | --- |
-| `symbol` | ใช่ | สัญลักษณ์หุ้น เช่น `PTT` |
-| `price` | ใช่ | ราคาเป็นตัวเลข ไม่รับค่าติดลบ |
-| `label` | ไม่ | ชื่อที่แสดง; ถ้าว่างจะใช้ `symbol` |
-| `changePercent` | ไม่ | เปอร์เซ็นต์เปลี่ยนแปลง เช่น `1.56` หมายถึง `+1.56%` |
-| `currency` | ไม่ | สกุลเงิน; ถ้าว่างจะใช้ `THB` |
-| `quotedAt` | ไม่ | เวลาที่แหล่งข้อมูลให้ราคานี้ เป็น Date ใน Sheet หรือ ISO datetime ที่มี timezone |
+| `symbol` | Yes | Stock symbol, such as `PTT` |
+| `price` | Yes | Numeric price; negative values are rejected |
+| `label` | No | Display name; defaults to `symbol` when empty |
+| `changePercent` | No | Percentage change; `1.56` means `+1.56%` |
+| `currency` | No | Currency; defaults to `THB` when empty |
+| `quotedAt` | No | Source quote time, supplied as a Sheet Date or ISO datetime with a timezone |
 
-ตัวอย่างตารางต่อไปนี้เป็นข้อมูลจำลอง ไม่ใช่ราคาตลาดปัจจุบัน:
+The following table contains simulated data, not current market prices:
 
 | symbol | price | changePercent | quotedAt | label | currency |
 | --- | ---: | ---: | --- | --- | --- |
 | PTT | 32.5 | 1.56 | 2026-10-04T02:55:00Z | PTT | THB |
 | AOT | 60 |  |  | Airports of Thailand | THB |
 
-สูตรใน Sheet ใช้ได้เมื่อผลลัพธ์ของเซลล์เป็นตัวเลข JavaScript ตามที่ `getValues()` คืนมา ค่าตัวเลขที่เป็นข้อความรับเฉพาะรูปแบบ decimal/exponent ที่ไม่กำกวม เช่น `32.5` หรือ `3.25e1` ค่าว่างจะไม่ถูกเปลี่ยนเป็นศูนย์ และค่า `0` จะคงอยู่ในคำตอบ สคริปต์ตรวจเฉพาะ header และข้อมูล 200 แถวแรก แล้วส่งหุ้นที่มี symbol ไม่ว่างไม่เกิน 5 รายการตามลำดับแถว
+Formulas are supported when `getValues()` returns a JavaScript number. Numeric strings must use an unambiguous decimal/exponent format, such as `32.5` or `3.25e1`. Empty cells do not become zero, and reported zero values are preserved. The script checks headers and the first 200 data rows, returning at most five nonempty symbols in row order.
 
-header ที่ขาด `symbol`/`price`, header ที่รู้จักซ้ำ หรือค่าหุ้น/ตัวเลข/วันที่ที่ไม่ถูกต้อง จะได้ JSON error code `invalid_sheet` แทนการส่งราคาที่แต่งขึ้น
+Missing `symbol`/`price` headers, duplicate recognized headers, or invalid stock/numeric/date values produce an `invalid_sheet` JSON error instead of fabricated prices.
 
-## ติดตั้ง Apps Script
+## Install Apps Script
 
-1. สร้าง Google Sheet และเก็บเป็นส่วนตัว อย่าเปิดสิทธิ์ให้ทุกคนอ่าน Sheet ต้นทาง
-2. เปิด **Extensions → Apps Script** จาก Sheet นั้น เปิด `Code.gs` แล้วแทนที่เนื้อหาด้วยไฟล์ `integrations/google-sheets/Code.gs` ในโปรเจกต์นี้ จากนั้นบันทึก
-3. เปิด **Project Settings → Script Properties** แล้วเพิ่มค่าต่อไปนี้:
+1. Create a private Google Sheet. Do not make the source Sheet publicly readable.
+2. Open **Extensions → Apps Script**. Replace `Code.gs` with `integrations/google-sheets/Code.gs` from this repository and save.
+3. Open **Project Settings → Script Properties** and add:
 
-   | Property | ค่า |
+   | Property | Value |
    | --- | --- |
-   | `SPREADSHEET_ID` | ส่วนของ URL Sheet ระหว่าง `/d/` และ `/edit` |
-   | `SHEET_NAME` | ชื่อแท็บตามที่เห็นใน Sheet ทุกตัวอักษร |
-   | `ACCESS_TOKEN` | token สุ่มที่สร้างในเครื่องของคุณ |
+   | `SPREADSHEET_ID` | The part of the Sheet URL between `/d/` and `/edit` |
+   | `SHEET_NAME` | The exact tab name shown in the Sheet |
+   | `ACCESS_TOKEN` | A random token generated locally |
 
-   สร้าง token ใหม่ใน Terminal บนเครื่องของคุณด้วย `openssl rand -hex 32` แล้วใส่ค่านั้นใน Script Properties โดยตรง อย่าส่ง token จริงในแชตหรือใส่ไว้ในเอกสารที่แชร์
-4. เลือก **Deploy → New deployment → Web app** ตั้ง **Execute as** เป็นบัญชีเจ้าของสคริปต์ แล้วเลือก **Who has access** ตามนโยบายของบัญชีหรือ Workspace หากบอร์ดต้องเรียกโดยไม่ลงชื่อเข้า Google ต้องมีการเข้าถึงเว็บแอปที่ไม่บังคับ Google login; ใช้ได้เฉพาะเมื่อ Workspace อนุญาต การตั้งค่านี้ไม่ทำให้ Sheet ต้นทางเป็นสาธารณะ
-5. Deploy แล้วจด URL เว็บแอปที่ลงท้ายด้วย `/exec` ไว้สำหรับตั้งค่า ESP32 โดยยังไม่ต้องนำ token ไปไว้ใน log หรือหน้าจอ
+   Generate a token locally with `openssl rand -hex 32` and enter it directly in Script Properties. Do not send real tokens in chat or put them in shared documentation.
+4. Choose **Deploy → New deployment → Web app**. Set **Execute as** to the script owner's account and select **Who has access** according to your account or Workspace policy. For access without a Google login, the deployment must allow unauthenticated web-app requests, which is available only if Workspace policy permits it. This does not make the source Sheet public.
+5. Deploy and keep the web-app URL ending in `/exec` for device configuration. Do not expose the token in logs or screenshots.
 
-## เรียก endpoint
+## Call the endpoint
 
-ส่ง GET ไปยัง URL ที่ได้จากขั้นตอน Deploy พร้อม query parameter `accessToken`:
+Send a GET request to the deployed URL with an `accessToken` query parameter:
 
 ```text
 https://script.google.com/macros/s/DEPLOYMENT_ID/exec?accessToken=YOUR_TOKEN
 ```
 
-ใส่ token จริงในอุปกรณ์หรือเครื่องมือทดสอบของคุณเองเท่านั้น หาก token มีอักขระพิเศษ ให้ URL-encode ก่อนส่ง ตัว endpoint ตรวจ token ก่อนเรียก `SpreadsheetApp` และรับ token ผ่าน query parameter ตาม event ของ Apps Script เท่านั้น
+Enter the real token only on your device or in your own test tools. URL-encode special characters. The endpoint checks the token before calling `SpreadsheetApp` and accepts the token only through the Apps Script event's query parameters.
 
-ตัวอย่าง response อยู่ใน [`examples/stocks-response.json`](../../examples/stocks-response.json) ค่า `generatedAt` คือเวลาที่ endpoint สร้างคำตอบ ส่วน `quotedAt` คือเวลาของราคาจากแหล่งข้อมูลและเป็น optional; หากไม่มีเวลาราคา อย่าสร้าง timestamp ขึ้นเอง ฟิลด์ราคาและ `changePercent` ที่ว่างจะถูกละออก
+See [`examples/stocks-response.json`](../../examples/stocks-response.json) for a response. `generatedAt` is the response creation time. Optional `quotedAt` is the source quote time; do not invent it when unknown. Empty price and `changePercent` fields are omitted.
 
-Apps Script `ContentService` ควบคุม HTTP status code ของ response ไม่ได้ ดังนั้น error อาจมาพร้อม HTTP 200 ให้ผู้เรียกตรวจ JSON และ `error.code` ด้วย รหัสที่ส่งออกมีเพียง `auth_required`, `configuration_error`, `invalid_sheet` และ `source_unavailable`; ข้อความ exception, token และ ID ส่วนตัวจะไม่ถูกส่งกลับ แอปบน ESP32 ต้องตาม redirect ของ Google ที่เกิดจาก ContentService ได้
+Apps Script `ContentService` cannot set the HTTP response status, so errors may arrive with HTTP 200. Callers must inspect the JSON and `error.code`. The only error codes are `auth_required`, `configuration_error`, `invalid_sheet`, and `source_unavailable`. Exception messages, tokens, and private IDs are not returned. The ESP32 client must follow Google's ContentService redirects.
 
-## หมุน token และดูแลแหล่งราคา
+## Token rotation and price sources
 
-เมื่อต้องหมุน token ให้สร้างค่าใหม่ในเครื่อง แก้ `ACCESS_TOKEN` ใน Script Properties และอัปเดตค่าใน ESP32 ให้ตรงกัน จากนั้น token เก่าจะใช้ไม่ได้ อย่าใส่ token ใน serial log เพราะ URL ที่เรียกมี token อยู่ใน query string
+To rotate a token, generate a new value locally, update `ACCESS_TOKEN` in Script Properties, and update the ESP32 to match. The previous token then stops working. Avoid serial logging of endpoint URLs because the query contains the token.
 
-ไฟล์นี้ทำหน้าที่อ่าน Sheet และตรวจรูปแบบข้อมูลเท่านั้น ยังไม่มีการดึงหรือเติมราคาหุ้นอัตโนมัติ เช่น `GOOGLEFINANCE` หรือบริการภายนอก ผู้ใช้ต้องเลือกวิธีเติมราคาที่เหมาะกับหุ้นที่ติดตามและตรวจเวลา `quotedAt` จากแหล่งข้อมูลนั้นเอง
+This script only reads and validates the Sheet. It does not automatically fetch or populate prices through `GOOGLEFINANCE` or external services. Choose a suitable source for your symbols and verify its `quotedAt` timestamp yourself.

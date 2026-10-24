@@ -1,10 +1,10 @@
 # Development
 
-รันคำสั่งจาก repository root ไม่ต้องติดตั้ง RTK หรือใช้ Codex เพื่อ build
+Run commands from the repository root. Building does not require RTK or Codex.
 
 ## Build firmware
 
-ใช้ Python 3.9+, Git และ toolchain ที่ PlatformIO จัดการให้:
+Use Python 3.9+, Git, and the toolchain managed by PlatformIO:
 
 ```sh
 python3 -m venv .venv
@@ -13,26 +13,26 @@ python3 -m venv .venv
 .venv/bin/python scripts/package_firmware.py
 ```
 
-`scripts/pio.py` ใช้ cache `.platformio/` และ system trust store เฉพาะ build process ส่วน dependency versions อยู่ใน `firmware/platformio.ini`, `firmware/main/idf_component.yml` และ `firmware/dependencies.lock`
+`scripts/pio.py` uses the `.platformio/` cache and applies the system trust store only to the build process. Dependency versions are specified in `firmware/platformio.ini`, `firmware/main/idf_component.yml`, and `firmware/dependencies.lock`.
 
-ผล package อยู่ใน `artifacts/` ซึ่งไม่เข้า Git แจก binary ผ่าน GitHub Releases ภายหลังได้ ดู offset, USB migration และ OTA ใน [firmware guide](../firmware/README.md)
+Packages are written to ignored `artifacts/`. Binaries can be distributed separately through GitHub Releases. See the [firmware guide](../firmware/README.md) for offsets, USB migration, and OTA.
 
 ## Tests
 
-Python sender/tools และ Node portal/endpoint:
+Python sender/tool tests and Node portal/endpoint tests:
 
 ```sh
 python3 -m unittest discover -s tests -p 'test_*.py' -v
 node --test tests/stocks_endpoint.test.cjs tests/portal.test.cjs
 ```
 
-Portable C++ / SDK stubs ต้องมี C/C++ compiler และ SDK cJSON ที่ build ด้านบนดาวน์โหลดไว้:
+Portable C++ / SDK-stub tests require a C/C++ compiler and the SDK cJSON source downloaded by the build above:
 
 ```sh
 .venv/bin/python scripts/test_firmware.py
 ```
 
-Native UI ใช้ `ui.cpp` กับ LVGL จริง จำลอง runtime/GPIO และสร้างภาพ PPM โดยไม่ต้องต่อบอร์ด:
+Native UI tests use the actual `ui.cpp` and LVGL with simulated runtime/GPIO. They produce PPM screenshots without a connected device:
 
 ```sh
 cmake -S tests/native_ui -B .platformio/native-ui
@@ -42,8 +42,8 @@ ctest --test-dir .platformio/native-ui --output-on-failure
 
 ## Assets
 
-Generated C fonts และ RGB565 arrays เป็น source ที่ต้อง commit พร้อม PNG/TTF ต้นฉบับ ดู [asset pipeline](../firmware/assets/README.md) หากต้องการสร้างภาพใหม่ ส่วน font exporter ใช้ Pillow, fontTools และ `hb-shape` (HarfBuzz) สำหรับ authoring เท่านั้น ไม่อยู่ใน runtime ของ ESP32
+Generated C fonts and RGB565 arrays are source files. Commit them together with their PNG/TTF inputs. See the [asset pipeline](../firmware/assets/README.md) to regenerate artwork. The font exporter uses Pillow, fontTools, and `hb-shape` (HarfBuzz) during authoring only; they are not part of the ESP32 runtime.
 
 ## Working files
 
-เก็บงานทดลอง ภาพเปรียบเทียบ และรายงานเฉพาะเครื่องใน `.worktrees/` ไม่ใช้ temp directory นอก repo ไม่ commit `.worktrees/`, `.platformio/`, `.venv/`, `.device-backups/`, `artifacts/`, `node_modules/` หรือ `*.local.json` ส่วน `graft/` เป็น checkout อื่น ไม่ใช่ส่วนของ Desk Duo
+Keep experiments, comparison images, and local reports in `.worktrees/`, rather than a temporary directory outside the repository. Do not commit `.worktrees/`, `.platformio/`, `.venv/`, `.device-backups/`, `artifacts/`, `node_modules/`, or `*.local.json`. The `graft/` directory is a separate checkout, not part of Desk Duo.

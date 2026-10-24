@@ -32,7 +32,7 @@ The exporter asks offline HarfBuzz to select actual source GSUB glyphs and
 GPOS positions for each above/tone/base class. It crops their actual FreeType
 masks and packs 4bpp pixels. Tall vowels use narrow outlines, stacked tones
 use compact outlines, and E4D+tone ligatures include the above dot. The
-firmware shaper selects by combining context and uses descenderless ญ/ฐ
+firmware shaper selects by combining context and uses descenderless U+0E0D/U+0E10
 bases before below vowels. Marks retain zero advance; identical bitmaps are
 shared. No HarfBuzz or new runtime shaping library is linked into firmware.
 Kerning remains disabled. Source positions are rounded to whole pixels.
