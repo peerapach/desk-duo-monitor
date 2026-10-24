@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -46,6 +47,14 @@ inline std::optional<UsageWindow> codexWeeklyWindow(const Usage& usage) {
     return std::nullopt;
 }
 
+enum class StockProvider : uint8_t { Json, Yahoo };
+enum class StockChartRange : uint8_t { Day, FiveDays };
+struct StockSelection {
+    std::string symbol;
+    bool enabled = true;
+    bool operator==(const StockSelection& other) const { return symbol == other.symbol && enabled == other.enabled; }
+};
+struct StockPoint { int64_t at = 0; std::optional<double> close; };
 struct Stock {
     std::string symbol;
     std::string label;
@@ -53,9 +62,14 @@ struct Stock {
     std::optional<double> changePercent;
     std::string currency;
     std::optional<int64_t> quotedAt;  // UTC epoch seconds.
+    std::shared_ptr<const std::array<StockPoint, 32>> history;
+    std::size_t historyCount = 0;
+    StockChartRange chartRange = StockChartRange::Day;
+    bool stale = false;
 };
 
 struct Stocks {
+    bool partialFailure = false;
     int64_t generatedAt = 0;  // UTC epoch seconds.
     std::array<Stock, 5> items{};
     std::size_t count = 0;
@@ -65,11 +79,15 @@ struct Weather {
     std::optional<double> temperature;
     std::optional<double> humidity;
     std::optional<int> weatherCode;
+    std::optional<bool> isDay;  // Missing remains unknown, never inferred as night.
     std::optional<int64_t> updatedAt;  // UTC epoch seconds; absent for unknown local time zone.
     std::optional<int32_t> utcOffsetSeconds;
+    // Bounded source-index-aligned slice; known times are at/after updatedAt.
     std::array<std::optional<int64_t>, 4> hourlyTimes{};
     std::array<std::optional<double>, 4> hourlyTemperatures{};
     std::array<std::optional<double>, 4> hourlyRainProbability{};
+    std::array<std::optional<int>, 4> hourlyWeatherCodes{};
+    std::array<std::optional<bool>, 4> hourlyIsDay{};
     std::size_t hourlyCount = 0;
 };
 
@@ -81,6 +99,10 @@ struct SourceConfig {
     uint32_t refreshSeconds = 0;
     std::string label;
     std::map<std::string, std::string> fields;
+    StockProvider provider = StockProvider::Json;
+    std::array<StockSelection, 5> watchlist{};
+    std::size_t watchCount = 0;
+    StockChartRange chartRange = StockChartRange::Day;
 };
 
 struct TouchCalibration {
@@ -117,12 +139,16 @@ struct Snapshot {
     SourceSnapshot<Usage> codex;
     SourceSnapshot<Stocks> stocks;
     SourceSnapshot<Weather> weather;
+    StockChartRange stockChartRange = StockChartRange::Day;
+    bool stocksConfigured = false;
     std::string weatherLabel;
     uint32_t autoRotateSeconds = 20;
 };
 
 ParseResult<Usage> parseUsage(const std::string& json);
 ParseResult<Stocks> parseStocks(const std::string& json);
+ParseResult<Stock> parseYahooChart(const std::string& json, const std::string& symbol, StockChartRange range);
+bool validStockSymbol(const std::string& symbol);
 ParseResult<Weather> parseWeather(const std::string& json, const SourceConfig& source);
 
 Config defaultConfig();

@@ -68,6 +68,29 @@ async function portal(options={}) {
   return {get,submit,requests,markup,refreshDisplay:()=>vm.runInContext("refreshDisplay()",context),setDisplay(value){display=value;},displaySnapshot:()=>structuredClone(display),scenario,async pollDisplay(){const [id,fn]=displayTimers.entries().next().value;displayTimers.delete(id);await fn();},displayTimers,translationNodes,document:context.document,displayRequests,networkRequests,setNetwork(value){network=value;},networkRefresh:()=>get('networkRefresh').click(),displaySubmit:()=>get("display").submit({preventDefault(){}}),uploads,timers,setFirmware(value){firmware=value;},firmwareSubmit:()=>get("firmware").submit({preventDefault(){}})};
 }
 
+test('Yahoo watchlist saves sparse stock settings and preserves drafts through locale changes',async()=>{
+ const p=await portal();
+ assert.ok(p.get('stocksProvider'),'stock provider control');
+ assert.equal(p.get('stocksProvider').value,'json');
+ p.get('stocksProvider').value='yahoo';
+ p.get('stockMarket0').value='TH';p.get('stockSymbol0').value='ptt';p.get('stockEnabled0').checked=true;
+ p.get('stockMarket1').value='US';p.get('stockSymbol1').value='AAPL';p.get('stockEnabled1').checked=false;
+ p.get('stocksRange').value='5d';
+ p.get('language').value='en';p.get('language').change();
+ assert.equal(p.get('stockSymbol0').value,'ptt');
+ assert.deepEqual(await p.submit(),{stocks:{provider:'yahoo',chartRange:'5d',watchlist:[{symbol:'PTT.BK',enabled:true},{symbol:'AAPL',enabled:false}]}});
+ assert.match(p.get('stocksSelectionStored').textContent,/PTT.BK/);
+ await p.submit();assert.equal(p.requests.length,1);
+});
+test('duplicate Yahoo stocks and too-fast polling cannot write configuration',async()=>{
+ const p=await portal();assert.ok(p.get('stocksProvider'));
+ p.get('stocksProvider').value='yahoo';
+ for(const i of [0,1]){p.get('stockMarket'+i).value='TH';p.get('stockSymbol'+i).value='PTT';}
+ await p.submit();assert.equal(p.requests.length,0);
+ p.get('stockSymbol1').value='';p.get('stocksRefresh').value='30';
+ await p.submit();assert.equal(p.requests.length,0);
+});
+
 test('unchanged settings never POST and changed source fields omit hidden values',{timeout:30000},async()=>{
   const p=await portal();
   await p.submit();assert.equal(p.requests.length,0);
@@ -242,6 +265,18 @@ test('manual status reports actual stale values and old generation waits for new
  value.weather.hasData=false;value.attempt.outcome='accepted';value.attempt.currentGeneration=false;p.setNetwork(value);await p.networkRefresh();assert.match(p.get('weatherDataStatus').textContent,/รอ.*ตั้งค่าปัจจุบัน/);assert.doesNotMatch(p.get('weatherDataStatus').textContent,/รับข้อมูลแล้ว/);
  assert.equal(p.requests.length,0);assert.equal(p.timers.size,0);
 });
+test('new receipt cannot make a two-hour-old source observation current',async()=>{
+ const p=await portal({language:'en'});
+ const now=1792702800;
+ for(const [age,stale] of [[7199,false],[7200,true],[86400,true]]){
+  p.setNetwork({stationOnline:true,weatherConfigured:true,epochSeconds:now,weather:{hasData:true,stale:false,ageMs:0,updatedAt:now-age,utcOffsetSeconds:25200,temperature:28},attempt:{attempted:true,currentGeneration:true,outcome:'accepted'}});
+  await p.networkRefresh();const text=p.get('weatherDataStatus').textContent;
+  assert.match(text,stale?/Weather data: Stale data/:/Weather data: Data available/);
+  assert.match(text,new RegExp('Observation age '+age+' seconds'));assert.match(text,/Receipt age 0 seconds/);
+ }
+ p.setNetwork({stationOnline:true,weatherConfigured:true,epochSeconds:0,weather:{hasData:true,stale:false,ageMs:0,updatedAt:now-86400},attempt:{attempted:true,currentGeneration:true,outcome:'accepted'}});
+ await p.networkRefresh();assert.match(p.get('weatherDataStatus').textContent,/Data available/);
+});
 test('weather failures use friendly clock HTTPS HTTP and format statuses',{timeout:30000},async()=>{
  const p=await portal();assert.ok(p.get('networkRefresh'),'missing manual status refresh');
  for(const [outcome,text] of [['clock_wait',/รอเวลา/],['tls_failure',/HTTPS/],['dns_failure',/เครือข่าย/],['parse_failure',/รูปแบบ/],['http_status',/HTTP 429/]]){
@@ -298,9 +333,9 @@ test('failed display save and failed readback never claim selected language save
 test('firmware picker copy follows selected language and keeps exact selected filename',{timeout:30000},async()=>{
  const p=await portal();assert.ok(p.get('firmwareSelected'),'selected file copy must be localized');
  assert.match(p.get('firmwareSelected').textContent,/ยังไม่เลือก/);
- p.get('firmwareFile').files=[{name:'desk-duo-app.bin'}];p.get('firmwareFile').change();
- assert.equal(p.get('firmwareSelected').textContent,'desk-duo-app.bin');
- p.get('language').value='en';p.get('language').change();assert.equal(p.get('firmwareSelected').textContent,'desk-duo-app.bin');
+ p.get('firmwareFile').files=[{name:'desk-duo-app.bin',size:2048}];p.get('firmwareFile').change();
+ assert.match(p.get('firmwareSelected').textContent,/^desk-duo-app.bin · 2048 /);
+ p.get('language').value='en';p.get('language').change();assert.match(p.get('firmwareSelected').textContent,/^desk-duo-app.bin · 2048 /);
  p.get('firmwareFile').files=[];p.get('firmwareFile').change();assert.equal(p.get('firmwareSelected').textContent,'No file selected');
 });
 

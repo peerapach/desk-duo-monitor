@@ -20,7 +20,10 @@ int main() {
  assert(cJSON_IsNull(cJSON_GetObjectItemCaseSensitive(attempt,"httpStatus")));
  assert(std::string(cJSON_GetObjectItemCaseSensitive(attempt,"outcome")->valuestring)=="not_attempted");
  auto* weather=cJSON_GetObjectItemCaseSensitive(root,"weather");
- assert(cJSON_GetArraySize(weather)==8);
+ assert(cJSON_GetArraySize(weather)==11);
+ assert(cJSON_IsNull(cJSON_GetObjectItemCaseSensitive(weather,"updatedAt")));
+ assert(cJSON_IsNull(cJSON_GetObjectItemCaseSensitive(weather,"utcOffsetSeconds")));
+ assert(cJSON_IsNull(cJSON_GetObjectItemCaseSensitive(weather,"isDay")));
  assert(cJSON_IsFalse(cJSON_GetObjectItemCaseSensitive(weather,"hasData")));
  assert(cJSON_IsNull(cJSON_GetObjectItemCaseSensitive(weather,"ageMs")));
  assert(cJSON_IsNull(cJSON_GetObjectItemCaseSensitive(weather,"hourlyCount")));cJSON_Delete(root);
@@ -32,6 +35,7 @@ int main() {
  record.fail(WeatherOutcome::HttpPerform,WeatherPhase::Http); // don't erase actual producer failure
  collector.finish(record,140,90140);
  current.weather.data=Weather{};current.weather.data->temperature=29.6;current.weather.data->humidity=76;current.weather.data->weatherCode=3;current.weather.data->hourlyCount=4;
+ current.weather.data->updatedAt=1791092700;current.weather.data->utcOffsetSeconds=25200;current.weather.data->isDay=false;
  current.weather.receivedAtMs=125;current.weather.unknown=false;current.weather.stale=true;
  json=weatherDiagnosticsJson(collector.snapshot(),current,true,1700000001,200);
  root=cJSON_Parse(json.c_str());attempt=cJSON_GetObjectItemCaseSensitive(root,"attempt");weather=cJSON_GetObjectItemCaseSensitive(root,"weather");
@@ -41,11 +45,14 @@ int main() {
  assert(cJSON_GetObjectItemCaseSensitive(weather,"ageMs")->valueint==75);
  assert(cJSON_GetObjectItemCaseSensitive(weather,"temperature")->valuedouble==29.6);
  assert(cJSON_GetObjectItemCaseSensitive(weather,"hourlyCount")->valueint==4);
+ assert(cJSON_GetObjectItemCaseSensitive(weather,"updatedAt")->valuedouble==1791092700);
+ assert(cJSON_GetObjectItemCaseSensitive(weather,"utcOffsetSeconds")->valueint==25200);
+ assert(cJSON_IsFalse(cJSON_GetObjectItemCaseSensitive(weather,"isDay")));
  assert(cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(attempt,"currentGeneration")));cJSON_Delete(root);
  current.generation=10;json=weatherDiagnosticsJson(collector.snapshot(),current,false,1,200);
  root=cJSON_Parse(json.c_str());attempt=cJSON_GetObjectItemCaseSensitive(root,"attempt");assert(cJSON_IsFalse(cJSON_GetObjectItemCaseSensitive(attempt,"currentGeneration")));
  assert(cJSON_IsFalse(cJSON_GetObjectItemCaseSensitive(root,"clockReady")));assert(cJSON_IsFalse(cJSON_GetObjectItemCaseSensitive(root,"stationOnline")));cJSON_Delete(root);
- for(const auto& entry: {std::pair<const char*,const char*>{"no_readings","no_readings"},{"upstream_error","upstream_error"},{"temperature","temperature"},{"secret URL https://user:pass@host?token=secret","other"}}){
+ for(const auto& entry: {std::pair<const char*,const char*>{"no_readings","no_readings"},{"upstream_error","upstream_error"},{"temperature","temperature"},{"is_day","is_day"},{"hourly_weather_code","hourly_weather_code"},{"hourly_is_day","hourly_is_day"},{"secret URL https://user:pass@host?token=secret","other"}}){
  record=collector.begin(10,200,true);record.parserReason=weatherParserReason(entry.first);record.fail(WeatherOutcome::ParseFailure,WeatherPhase::Parse);collector.finish(record,210,90210);
  json=weatherDiagnosticsJson(collector.snapshot(),current,true,1700000001,210);root=cJSON_Parse(json.c_str());attempt=cJSON_GetObjectItemCaseSensitive(root,"attempt");assert(std::string(cJSON_GetObjectItemCaseSensitive(attempt,"parserReason")->valuestring)==entry.second);assert(json.find("secret")==std::string::npos);cJSON_Delete(root);
  }

@@ -6,6 +6,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <memory>
@@ -22,8 +23,8 @@ constexpr std::size_t kConfigBodyLimit = 8192;
 constexpr std::size_t kStoredConfigLimit = 32768;
 // Every accepted persisted string is bounded below; 4x covers quote/UTF-8 JSON escaping.
 // 2048 bytes covers all fixed keys, separators, booleans, numbers, and object punctuation.
-constexpr std::size_t kMaximumPersistedStringBytes = 288 + 2 * 1024 + 12 * (64 + 256) + 48 + 8 * (21 + 128);
-constexpr std::size_t kMaximumSerializedConfigBytes = 4 * kMaximumPersistedStringBytes + 2048;
+constexpr std::size_t kMaximumPersistedStringBytes = 288 + 5 * 20 + 2 * 1024 + 12 * (64 + 256) + 48 + 8 * (21 + 128);
+constexpr std::size_t kMaximumSerializedConfigBytes = 4 * kMaximumPersistedStringBytes + 2560;
 static_assert(kMaximumSerializedConfigBytes <= kStoredConfigLimit, "stored config cap must fit every valid config");
 constexpr std::size_t kMaximumJsonDepth = 16;
 constexpr std::size_t kMaximumUrlLength = 1024;
@@ -31,7 +32,7 @@ constexpr std::size_t kMaximumHeaderCount = 6;
 constexpr std::size_t kMaximumHeaderNameLength = 64;
 constexpr std::size_t kMaximumHeaderValueLength = 256;
 constexpr std::size_t kMaximumMappingLength = 128;
-constexpr std::size_t kMaximumFieldCount = 8;
+constexpr std::size_t kMaximumFieldCount = 11;
 constexpr uint32_t kMinimumRefreshSeconds = 30;
 constexpr uint32_t kMaximumRefreshSeconds = 86400;
 constexpr uint32_t kMinimumRotationSeconds = 5;
@@ -542,6 +543,58 @@ bool validUrl(const std::string& url, UrlParts* parts) {
     return true;
 }
 
+// A deliberately narrow public projection. Never decode arbitrary query
+// strings: encoded parameter names could alias a second latitude/longitude.
+bool publicWeatherCoordinates(const std::string& url, double& latitude, double& longitude) {
+    UrlParts parts;
+    if (!validUrl(url, &parts) || parts.scheme != "https" || parts.host != "api.open-meteo.com" ||
+        (parts.hasPort && parts.port != 443)) return false;
+    const auto path = url.find('/', url.find("://") + 3);
+    const auto query = url.find('?');
+    if (path == std::string::npos || query == std::string::npos ||
+        url.substr(path, query - path) != "/v1/forecast") return false;
+    auto coordinate = [](const std::string& text, double limit, double& value) {
+        // Decimal/scientific numeric syntax only; no whitespace, hex, NaN,
+        // infinity, percent escapes, lists or partially parsed values.
+        std::size_t i = 0;
+        if (i < text.size() && text[i] == '-') ++i;
+        const auto digits = [&]() {
+            const auto start = i;
+            while (i < text.size() && text[i] >= '0' && text[i] <= '9') ++i;
+            return i > start;
+        };
+        if (!digits()) return false;
+        if (i < text.size() && text[i] == '.') { ++i; if (!digits()) return false; }
+        if (i < text.size() && (text[i] == 'e' || text[i] == 'E')) {
+            ++i;
+            if (i < text.size() && (text[i] == '+' || text[i] == '-')) ++i;
+            if (!digits()) return false;
+        }
+        if (i != text.size()) return false;
+        value = std::strtod(text.c_str(), nullptr);
+        return std::isfinite(value) && std::abs(value) <= limit;
+    };
+    bool hasLatitude = false, hasLongitude = false;
+    for (std::size_t start = query + 1; start < url.size();) {
+        const auto end = url.find('&', start);
+        const auto item = url.substr(start, end == std::string::npos ? end : end - start);
+        const auto equal = item.find('=');
+        if (equal == std::string::npos || equal == 0) return false;
+        const auto key = item.substr(0, equal);
+        if (key.find('%') != std::string::npos || key.find('+') != std::string::npos) return false;
+        if (key == "latitude") {
+            if (hasLatitude || !coordinate(item.substr(equal + 1), 90, latitude)) return false;
+            hasLatitude = true;
+        } else if (key == "longitude") {
+            if (hasLongitude || !coordinate(item.substr(equal + 1), 180, longitude)) return false;
+            hasLongitude = true;
+        }
+        if (end == std::string::npos) break;
+        start = end + 1;
+    }
+    return hasLatitude && hasLongitude;
+}
+
 uint16_t normalizedPort(const UrlParts& url) {
     if (url.hasPort) return url.port;
     return url.scheme == "https" ? 443 : 80;
@@ -601,9 +654,12 @@ const std::map<std::string, std::string>& defaultWeatherFields() {
         {"temperature", "current.temperature_2m"},
         {"humidity", "current.relative_humidity_2m"},
         {"weatherCode", "current.weather_code"},
+        {"isDay", "current.is_day"},
         {"updatedAt", "current.time"},
         {"utcOffsetSeconds", "utc_offset_seconds"},
         {"hourlyTimes", "hourly.time"},
+        {"hourlyWeatherCodes", "hourly.weather_code"},
+        {"hourlyIsDay", "hourly.is_day"},
         {"hourlyTemperatures", "hourly.temperature_2m"},
         {"hourlyRainProbability", "hourly.precipitation_probability"},
     };
@@ -638,6 +694,16 @@ bool parseMappedOptionalNumber(const cJSON* root, const std::map<std::string, st
     double number = 0;
     if (!readNumber(node, number)) return false;
     output = number;
+    return true;
+}
+
+// Open-Meteo uses numeric 0/1; custom sources may use JSON booleans.
+bool parseDayFlag(const cJSON* node, std::optional<bool>& output) {
+    if (node == nullptr || isNull(node)) { output.reset(); return true; }
+    if (cJSON_IsBool(node)) { output = cJSON_IsTrue(node); return true; }
+    int64_t flag = 0;
+    if (!readInteger(node, 0, 1, flag)) return false;
+    output = flag == 1;
     return true;
 }
 
@@ -702,7 +768,19 @@ bool validateSource(const SourceConfig& source, bool weather) {
     for (const auto& header : source.headers) {
         if (!validHeader(header.first, header.second)) return false;
     }
+    if (source.provider != StockProvider::Json && source.provider != StockProvider::Yahoo) return false;
+    if (source.chartRange != StockChartRange::Day && source.chartRange != StockChartRange::FiveDays) return false;
+    if (source.watchCount > source.watchlist.size()) return false;
+    std::set<std::string> symbols;
+    for (std::size_t i = 0; i < source.watchlist.size(); ++i) {
+        const auto& entry = source.watchlist[i];
+        if (i < source.watchCount) {
+            if (!validStockSymbol(entry.symbol) || !symbols.insert(entry.symbol).second) return false;
+        } else if (!entry.symbol.empty() || !entry.enabled) return false;
+    }
+    if (!weather && source.provider == StockProvider::Yahoo && source.refreshSeconds < 300) return false;
     if (weather) {
+        if (source.provider != StockProvider::Json || source.watchCount != 0 || source.chartRange != StockChartRange::Day) return false;
         if (source.label.size() > 48 || controlsPresent(source.label) || source.fields.size() > kMaximumFieldCount) return false;
         for (const auto& mapping : source.fields) {
             if (!validMappingName(mapping.first) || !parsePath(mapping.second)) return false;
@@ -767,6 +845,31 @@ bool parseSourcePatch(const cJSON* node, SourceConfig& source, bool weather) {
             int64_t seconds = 0;
             if (!readInteger(item, kMinimumRefreshSeconds, kMaximumRefreshSeconds, seconds)) return false;
             source.refreshSeconds = static_cast<uint32_t>(seconds);
+        } else if (!weather && key == "provider") {
+            std::string value;
+            if (!readString(item, value) || (value != "json" && value != "yahoo")) return false;
+            source.provider = value == "yahoo" ? StockProvider::Yahoo : StockProvider::Json;
+        } else if (!weather && key == "chartRange") {
+            std::string value;
+            if (!readString(item, value) || (value != "1d" && value != "5d")) return false;
+            source.chartRange = value == "5d" ? StockChartRange::FiveDays : StockChartRange::Day;
+        } else if (!weather && key == "watchlist") {
+            if (!cJSON_IsArray(item) || cJSON_GetArraySize(item) > 5) return false;
+            source.watchlist = {};
+            source.watchCount = 0;
+            for (const cJSON* entry = item->child; entry; entry = entry->next) {
+                if (!cJSON_IsObject(entry)) return false;
+                auto& selection = source.watchlist[source.watchCount++];
+                if (!readString(field(entry, "symbol"), selection.symbol, false)) return false;
+                for (char& c : selection.symbol) if (c >= 'a' && c <= 'z') c -= 'a' - 'A';
+                for (const cJSON* part = entry->child; part; part = part->next) {
+                    const std::string name(part->string);
+                    if (name == "enabled") {
+                        if (!cJSON_IsBool(part)) return false;
+                        selection.enabled = cJSON_IsTrue(part);
+                    } else if (name != "symbol") return false;
+                }
+            }
         } else if (weather && key == "label") {
             if (!readString(item, source.label) || source.label.size() > 48) return false;
         } else if (weather && key == "fields") {
@@ -865,6 +968,11 @@ cJSON* configJson(const Config& config, bool includeSecrets, bool publicUrls) {
     auto sourceToJson = [includeSecrets, publicUrls](cJSON* target, const SourceConfig& source, bool isWeather) {
         std::string url = source.url;
         if (publicUrls) {
+            double latitude = 0, longitude = 0;
+            if (isWeather && publicWeatherCoordinates(source.url, latitude, longitude)) {
+                addNumber(target, "latitude", latitude);
+                addNumber(target, "longitude", longitude);
+            }
             const std::size_t query = url.find_first_of("?#");
             cJSON_AddBoolToObject(target, "urlDetailsHidden", query != std::string::npos);
             cJSON_AddBoolToObject(target, "headersConfigured", !source.headers.empty());
@@ -877,6 +985,18 @@ cJSON* configJson(const Config& config, bool includeSecrets, bool publicUrls) {
             cJSON* fields = cJSON_AddObjectToObject(target, "fields");
             if (fields != nullptr) {
                 for (const auto& mapping : source.fields) addString(fields, mapping.first.c_str(), mapping.second);
+            }
+        }
+        if (!isWeather && (publicUrls || source.provider != StockProvider::Json || source.watchCount != 0 || source.chartRange != StockChartRange::Day)) {
+            addString(target, "provider", source.provider == StockProvider::Yahoo ? "yahoo" : "json");
+            addString(target, "chartRange", source.chartRange == StockChartRange::FiveDays ? "5d" : "1d");
+            cJSON* list = cJSON_AddArrayToObject(target, "watchlist");
+            if (list) for (std::size_t i = 0; i < source.watchCount; ++i) {
+                cJSON* entry = cJSON_CreateObject();
+                if (!entry) continue;
+                addString(entry, "symbol", source.watchlist[i].symbol);
+                cJSON_AddBoolToObject(entry, "enabled", source.watchlist[i].enabled);
+                cJSON_AddItemToArray(list, entry);
             }
         }
         if (includeSecrets) {
@@ -911,7 +1031,9 @@ std::string printJson(cJSON* root) {
 
 bool sameSource(const SourceConfig& left, const SourceConfig& right) {
     return left.url == right.url && left.headers == right.headers &&
-           left.refreshSeconds == right.refreshSeconds && left.fields == right.fields;
+           left.refreshSeconds == right.refreshSeconds && left.fields == right.fields &&
+           left.provider == right.provider && left.watchlist == right.watchlist &&
+           left.watchCount == right.watchCount && left.chartRange == right.chartRange;
 }
 
 template <typename T>
@@ -1063,6 +1185,7 @@ ParseResult<Weather> parseWeather(const std::string& json, const SourceConfig& s
         if (!readInteger(codeNode, 0, 99, code) || !isWeatherCode(static_cast<int>(code))) return failure<Weather>("weather_code");
         result.weatherCode = static_cast<int>(code);
     }
+    if (!parseDayFlag(mapped(root, mappings, "isDay"), result.isDay)) return failure<Weather>("is_day");
     const cJSON* offsetNode = mapped(root, mappings, "utcOffsetSeconds");
     if (offsetNode != nullptr && !isNull(offsetNode)) {
         int64_t offset = 0;
@@ -1075,43 +1198,139 @@ ParseResult<Weather> parseWeather(const std::string& json, const SourceConfig& s
     const cJSON* timeArray = nullptr;
     const cJSON* temperatureArray = nullptr;
     const cJSON* rainArray = nullptr;
-    bool timeScalar = false;
-    bool temperatureScalar = false;
-    bool rainScalar = false;
+    const cJSON* codeArray = nullptr;
+    const cJSON* dayArray = nullptr;
+    bool timeScalar = false, temperatureScalar = false, rainScalar = false;
+    bool codeScalar = false, dayScalar = false;
     if (!parseMappedArray(root, mappings, "hourlyTimes", timeArray, timeScalar) ||
         !parseMappedArray(root, mappings, "hourlyTemperatures", temperatureArray, temperatureScalar) ||
-        !parseMappedArray(root, mappings, "hourlyRainProbability", rainArray, rainScalar)) return failure<Weather>("hourly");
-    const auto validArray = [](const cJSON* array, bool scalar) {
-        return array == nullptr || isNull(array) || scalar || cJSON_IsArray(array);
-    };
-    if (!validArray(timeArray, timeScalar) || !validArray(temperatureArray, temperatureScalar) ||
-        !validArray(rainArray, rainScalar)) return failure<Weather>("hourly");
-    const std::size_t count = std::min<std::size_t>(4, std::max({arrayLength(timeArray, timeScalar),
-        arrayLength(temperatureArray, temperatureScalar), arrayLength(rainArray, rainScalar)}));
-    for (std::size_t index = 0; index < count; ++index) {
-        if (!parseWeatherTime(arrayValue(timeArray, timeScalar, index), result.utcOffsetSeconds,
-                              result.hourlyTimes[index])) return failure<Weather>("hourly_time");
-        const cJSON* tempNode = arrayValue(temperatureArray, temperatureScalar, index);
+        !parseMappedArray(root, mappings, "hourlyRainProbability", rainArray, rainScalar) ||
+        !parseMappedArray(root, mappings, "hourlyWeatherCodes", codeArray, codeScalar) ||
+        !parseMappedArray(root, mappings, "hourlyIsDay", dayArray, dayScalar)) return failure<Weather>("hourly");
+    const std::size_t count = std::max({arrayLength(timeArray, timeScalar),
+        arrayLength(temperatureArray, temperatureScalar), arrayLength(rainArray, rainScalar),
+        arrayLength(codeArray, codeScalar), arrayLength(dayArray, dayScalar)});
+    std::optional<int64_t> previousTime;
+    for (std::size_t sourceIndex = 0; sourceIndex < count && result.hourlyCount < 4; ++sourceIndex) {
+        std::optional<int64_t> time;
+        if (!parseWeatherTime(arrayValue(timeArray, timeScalar, sourceIndex), result.utcOffsetSeconds,
+                              time)) return failure<Weather>("hourly_time");
+        if (time && result.updatedAt && *time < *result.updatedAt) continue;
+        if (time && previousTime && *time <= *previousTime) return failure<Weather>("hourly_time");
+        if (time) previousTime = time;
+        const std::size_t index = result.hourlyCount++;
+        result.hourlyTimes[index] = time;
+        const cJSON* tempNode = arrayValue(temperatureArray, temperatureScalar, sourceIndex);
         if (tempNode != nullptr && !isNull(tempNode)) {
             double temperature = 0;
             if (!readNumber(tempNode, temperature) || temperature < -100.0 || temperature > 80.0) return failure<Weather>("hourly_temperature");
             result.hourlyTemperatures[index] = temperature;
         }
-        const cJSON* rainNode = arrayValue(rainArray, rainScalar, index);
+        const cJSON* rainNode = arrayValue(rainArray, rainScalar, sourceIndex);
         if (rainNode != nullptr && !isNull(rainNode)) {
             double probability = 0;
             if (!readNumber(rainNode, probability) || probability < 0.0 || probability > 100.0) return failure<Weather>("rain_probability");
             result.hourlyRainProbability[index] = probability;
         }
+        const cJSON* codeNode = arrayValue(codeArray, codeScalar, sourceIndex);
+        if (codeNode != nullptr && !isNull(codeNode)) {
+            int64_t code = 0;
+            if (!readInteger(codeNode, 0, 99, code) || !isWeatherCode(static_cast<int>(code))) return failure<Weather>("hourly_weather_code");
+            result.hourlyWeatherCodes[index] = static_cast<int>(code);
+        }
+        if (!parseDayFlag(arrayValue(dayArray, dayScalar, sourceIndex), result.hourlyIsDay[index])) return failure<Weather>("hourly_is_day");
     }
-    result.hourlyCount = count;
     bool hasMeasurement = result.temperature.has_value() || result.humidity.has_value() || result.weatherCode.has_value();
     for (std::size_t index = 0; index < result.hourlyCount; ++index) {
         hasMeasurement = hasMeasurement || result.hourlyTemperatures[index].has_value() ||
-                         result.hourlyRainProbability[index].has_value();
+                         result.hourlyRainProbability[index].has_value() || result.hourlyWeatherCodes[index].has_value();
     }
     if (!hasMeasurement) return failure<Weather>("no_readings");
     return {std::move(result), {}};
+}
+
+ParseResult<Stock> parseYahooChart(const std::string& json, const std::string& symbol, StockChartRange range) {
+    if (!validStockSymbol(symbol) || (range != StockChartRange::Day && range != StockChartRange::FiveDays)) return failure<Stock>("selection");
+    auto parsed = parseJson(json, kSourceBodyLimit);
+    if (!parsed.root) return failure<Stock>(parsed.error.c_str());
+    const cJSON* chart = field(parsed.root.get(), "chart");
+    const cJSON* error = field(chart, "error");
+    const cJSON* results = field(chart, "result");
+    if (!cJSON_IsObject(chart) || (error && !isNull(error)) || !cJSON_IsArray(results) || cJSON_GetArraySize(results) != 1) return failure<Stock>("chart");
+    const cJSON* result = cJSON_GetArrayItem(results, 0);
+    const cJSON* meta = field(result, "meta");
+    Stock stock;
+    stock.symbol = symbol;
+    stock.label = symbol;
+    stock.chartRange = range;
+    std::string returnedSymbol;
+    const bool thai = symbol.size() >= 3 && symbol.compare(symbol.size() - 3, 3, ".BK") == 0;
+    if (!cJSON_IsObject(result) || !cJSON_IsObject(meta) || !readString(field(meta, "symbol"), returnedSymbol, false) || returnedSymbol != symbol ||
+        !readString(field(meta, "currency"), stock.currency, false) || stock.currency != (thai ? "THB" : "USD")) return failure<Stock>("identity");
+    double price = 0;
+    int64_t quotedAt = 0;
+    if (!readNumber(field(meta, "regularMarketPrice"), price) || price < 0 ||
+        !readInteger(field(meta, "regularMarketTime"), 1, 253402300799LL, quotedAt)) return failure<Stock>("quote");
+    stock.price = price;
+    stock.quotedAt = quotedAt;
+    const cJSON* times = field(result, "timestamp");
+    const cJSON* quote = field(field(result, "indicators"), "quote");
+    const cJSON* closes = field(cJSON_GetArrayItem(quote, 0), "close");
+    if (!cJSON_IsArray(times) || !cJSON_IsArray(quote) || cJSON_GetArraySize(quote) != 1 || !cJSON_IsArray(closes) ||
+        cJSON_GetArraySize(times) != cJSON_GetArraySize(closes)) return failure<Stock>("samples");
+    // Validate every sample, including those later folded into the bounded chart.
+    std::vector<StockPoint> points;
+    int64_t previous = 0;
+    const cJSON* close = closes->child;
+    for (const cJSON* time = times->child; time; time = time->next, close = close->next) {
+        StockPoint point;
+        if (!readInteger(time, 1, 253402300799LL, point.at) || point.at <= previous) return failure<Stock>("time");
+        previous = point.at;
+        if (!isNull(close)) {
+            double value = 0;
+            if (!readNumber(close, value) || value < 0) return failure<Stock>("close");
+            point.close = value;
+        }
+        points.push_back(point);
+    }
+    auto history = std::make_shared<std::array<StockPoint, 32>>();
+    stock.historyCount = std::min(points.size(), history->size());
+    for (std::size_t i = 0; i < stock.historyCount; ++i) {
+        const std::size_t start = i * points.size() / stock.historyCount;
+        const std::size_t end = (i + 1) * points.size() / stock.historyCount;
+        // Keep endpoint times, and propagate a missing sample across its bucket
+        // so downsampling never invents a continuous line through a data gap.
+        (*history)[i] = points[i + 1 == stock.historyCount ? points.size() - 1 : start];
+        for (std::size_t j = start; j < end; ++j) if (!points[j].close) (*history)[i].close.reset();
+    }
+    std::optional<double> reference;
+    if (range == StockChartRange::Day) {
+        const cJSON* node = field(meta, "chartPreviousClose");
+        if (node && !isNull(node)) {
+            double value = 0;
+            if (!readNumber(node, value) || value <= 0) return failure<Stock>("reference");
+            reference = value;
+        }
+    } else {
+        for (std::size_t i = 0; i < stock.historyCount; ++i) {
+            if ((*history)[i].close) { if (*(*history)[i].close > 0) reference = (*history)[i].close; break; }
+        }
+    }
+    if (reference) {
+        const double change = (price / *reference - 1) * 100;
+        if (!std::isfinite(change)) return failure<Stock>("change");
+        stock.changePercent = change;
+    }
+    if(stock.historyCount) stock.history = std::move(history);
+    return {std::move(stock), {}};
+}
+
+bool validStockSymbol(const std::string& symbol) {
+    if (symbol.empty() || symbol.size() > 20) return false;
+    auto alnum = [](char c) { return (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9'); };
+    if (!alnum(symbol.front())) return false;
+    for (char c : symbol) if (!alnum(c) && c != '.' && c != '-') return false;
+    return true;
 }
 
 Config defaultConfig() {
@@ -1207,6 +1426,8 @@ Snapshot Model::snapshot(uint64_t nowMs) const {
     result.codex.unknown = !result.codex.data.has_value();
     result.stocks = statusAt(stocks_, nowMs, config_.stocks.refreshSeconds);
     result.weather = statusAt(weather_, nowMs, config_.weather.refreshSeconds);
+    result.stockChartRange = config_.stocks.chartRange;
+    result.stocksConfigured = config_.stocks.provider == StockProvider::Yahoo || !config_.stocks.url.empty();
     result.weatherLabel = config_.weather.label;
     result.autoRotateSeconds = config_.autoRotateSeconds;
     return result;

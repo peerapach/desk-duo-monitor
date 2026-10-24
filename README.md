@@ -1,64 +1,51 @@
-# ESP32 Desk Duo data feeds
+# Desk Duo
 
-โปรเจกต์นี้มี source สำหรับ endpoint หุ้นจาก Google Sheets, ตัวส่ง usage จาก CodexBar app บน Mac และ firmware Desk Duo สำหรับ CYD แนวตั้ง 240×320 พร้อม receiver `POST /api/usage`, portal ตั้งค่า, authenticated local OTA พร้อม boot rollback และการอ่านอากาศ/หุ้นตรงจาก ESP32 แล้ว Target build และ native tests ผ่าน; ยังไม่มีการ deploy Apps Script, เปิดใช้ hook, flash หรือทดสอบอุปกรณ์/endpoint จริง ดู [คู่มือ firmware](firmware/README.md) สำหรับ build, package และการตั้งค่า
+จอคู่หูบนโต๊ะสำหรับ **Claude + Codex usage, อากาศ และหุ้นไทย/US** บน ESP32 จอแนวตั้ง 240×320 พื้นดำ พร้อม Web Admin ภาษาไทย/English และอัปเดต firmware ผ่าน Wi-Fi
 
-## หุ้นจาก Google Sheets
+Mac ส่ง usage จาก CodexBar hooks เท่านั้น ส่วน ESP32 ดึงอากาศและหุ้นจากแหล่งข้อมูลที่ตั้งไว้โดยตรง ไม่ต้องมี Raspberry Pi หรือ server กลาง
 
-บอร์ดจะอ่าน JSON จาก Apps Script ส่วน Mac ไม่อ่าน Sheet ให้ดู [คู่มือตั้งค่า Apps Script และ Google Sheets](integrations/google-sheets/README.md) และ [ตัวอย่าง response](examples/stocks-response.json) ค่าหุ้นในตัวอย่างเป็นข้อมูลจำลอง
+## ฟีเจอร์
 
-## Usage จาก CodexBar app
+- Claude / Codex พร้อมตัวละครเคลื่อนไหว เปอร์เซ็นต์ usage และเวลา reset แยกตามช่วง
+- Codex เลือก 5h + Weekly หรือ Weekly อย่างเดียวผ่านเว็บ
+- อากาศและพยากรณ์ พร้อมภาพกลางวัน กลางคืน และฝน
+- หุ้นไทย/US จาก Yahoo Finance พร้อมกราฟเล็ก หรือ JSON endpoint / Google Sheets
+- Web Admin: Display, AI usage, Weather, Stocks, Wi-Fi, Firmware
+- TH/EN, ปรับความสว่างจากจอและเว็บ และตารางแสงกลางวัน/กลางคืนโดยใช้ค่าที่ตั้งเป็นฐาน
+- OTA แบบ application-only พร้อม boot rollback และรักษาค่าตั้งค่าเดิม
 
-ต้องใช้ Python 3.9 ขึ้นไปและใช้เฉพาะ standard library บนเครื่องนี้ `/usr/local/bin/python3` เป็น Python 3.12.8 และ `/usr/bin/python3` เป็น 3.9.6 ซึ่งทั้งคู่รองรับตัวส่ง ตัวอย่าง hook ใช้ absolute path `/usr/local/bin/python3`; เปลี่ยนเป็น absolute path ของ Python 3.9+ บนเครื่องที่ติดตั้ง CodexBar หาก path ต่างกัน
+## เริ่มใช้งาน
 
-CodexBar ส่ง event `usage_updated` เป็น JSON ทาง stdin ให้โปรแกรมที่ตั้งไว้ใน Settings → Hooks ตัวส่งนี้รันตรงจาก absolute executable และ arguments ของ hook โดยไม่ใช้ shell และไม่ต้องติดตั้ง CodexBar CLI เอกสาร CodexBar ระบุว่ามีช่วงจำกัดการเรียกซ้ำ 600 วินาทีต่อ provider/account/window สำหรับ event นี้ รายละเอียดอาจเปลี่ยนตามเวอร์ชัน ให้ตรวจ Settings → Hooks และเอกสาร [External event hooks](https://github.com/steipete/CodexBar/blob/main/docs/configuration.md#external-event-hooks) ของเวอร์ชันที่ติดตั้ง
+1. ใช้บอร์ด **ESP32-2432S028R (CYD)** จอ ILI9341 / flash 4 MiB / ไม่มี PSRAM
+2. [Build และติดตั้ง firmware](firmware/README.md) ทาง USB ครั้งแรก
+3. เชื่อม AP `DeskDuo-xxxxxx` เปิด `http://192.168.4.1` เพื่อตั้ง Wi-Fi และเก็บรหัส admin / usage token จากหน้า Setup
+4. [ตั้ง CodexBar hooks](docs/codexbar.md) บน Mac เพื่อส่ง Claude และ Codex
+5. ตั้งอากาศ หุ้น ภาษา และความสว่างจาก Web Admin ที่ IP ของบอร์ด
 
-event ใช้เปอร์เซ็นต์แบบสัดส่วน `0–1`; sender แปลงเป็น `usedPercent` ช่วง `0–100` เวลา `updatedAt` มาจาก `timestamp` ใน event และแปลงเป็น UTC ไม่ได้ใช้เวลาที่ส่ง request แทน ข้อมูล `primary` และ `secondary` จะมีเฉพาะเมื่อ event มีเปอร์เซ็นต์ของหน้าต่างนั้น ค่า `0` เป็นค่าจริง ส่วนหน้าต่างที่ขาดจะไม่ถูกสร้างขึ้นใหม่
+บอร์ดที่ตั้งค่าแล้วให้อัปเดต OTA ด้วย `desk-duo-app.bin` ดูรายละเอียด migration และการรักษา NVS ในคู่มือ firmware
 
-ตรวจตัวอย่างโดยไม่ใช้ network:
+## โครงสร้าง repository
 
-```sh
-rtk proxy python3 bridge/codexbar_sender.py --dry-run < examples/usage-event.json
-```
+| ที่อยู่ | หน้าที่ |
+| --- | --- |
+| `firmware/` | ESP-IDF / LVGL, Web Admin, ภาพและฟอนต์ |
+| `bridge/` | Python sender สำหรับ CodexBar hooks |
+| `integrations/google-sheets/` | Apps Script สำหรับ JSON endpoint ทางเลือก |
+| `examples/` | Config และ response ตัวอย่าง ไม่มีค่าของบอร์ดจริง |
+| `scripts/` | Build, package, migrate และสร้าง assets |
+| `tests/` | Python, Node, portable C++ และตัวเรนเดอร์ LVGL |
+| `docs/` | คู่มือ protocol, การพัฒนา และสถานะงาน |
+| `docs/superpowers/` | แผน/แบบในอดีต ไม่ใช่สถานะปัจจุบัน |
 
-ผลลัพธ์ที่ normalize แล้วตรงกับ [usage response fixture](examples/usage-response.json) เมื่อเทียบเป็น JSON ตัวอย่าง event และ response เป็นข้อมูลจำลอง
+## คู่มือ
 
-### เก็บ config ส่วนตัว
+- [CodexBar hooks](docs/codexbar.md)
+- [หุ้นไทย/US และกราฟ](docs/stocks.md)
+- [Protocol และ JSON fields](docs/protocol.md)
+- [การพัฒนาและการทดสอบ](docs/development.md)
+- [เตรียม push ขึ้น GitHub](docs/github.md)
+- [สถานะปัจจุบันและงานถัดไป](docs/status.md)
 
-คัดลอก `examples/bridge-config.example.json` ไปไว้ข้างนอก repository เช่น `~/.config/desk-duo/bridge.local.json` ตั้ง permission ของ directory เป็น `700` และไฟล์เป็น `600` แล้วแทน endpoint กับ token ตัวอย่างด้วยค่าที่ตั้งใน firmware จริง:
+เก็บ config ส่วนตัวนอก repo หรือใช้ชื่อ `*.local.json` ที่ถูก ignore แล้ว ไม่ใส่รหัส Wi-Fi, admin password หรือ usage token ใน source ตัวอย่าง
 
-```sh
-rtk proxy install -d -m 700 ~/.config/desk-duo
-rtk proxy install -m 600 examples/bridge-config.example.json ~/.config/desk-duo/bridge.local.json
-```
-
-อย่า commit ไฟล์ `bridge.local.json` หรือใส่ token จริงใน hook arguments, source, หรือ log ตัวอย่างนี้ยังไม่ใช่ค่า config สำหรับบอร์ดที่ deploy แล้ว
-
-ใน Settings → Hooks ของ CodexBar ให้นำเฉพาะ object `hooks` จาก [ตัวอย่าง hook merge fragment](examples/codexbar-hooks.example.json) ไปรวมกับ config เดิม แล้วแทน placeholder ด้วย absolute path ของ Python, script และ `bridge.local.json` คง `version`, `providers` และการตั้งค่าของ CodexBar เดิมไว้ ตัวอย่างนี้มี rule ที่เปิดใช้แยกสำหรับ Claude และ Codex แต่ไม่ได้แก้ config บนเครื่องให้
-
-CodexBar เรียก executable โดยตรง ไม่ผ่าน shell; `arguments` เป็นรายการ argument แยกกัน และ JSON event มาทาง stdin ตามรูปแบบของ app ตัวส่งจะใช้ HTTP `POST /api/usage`, ส่ง `Content-Type: application/json` กับ `Authorization: Bearer …`, ปฏิเสธ redirect และถือว่า status 2xx คือส่งสำเร็จ การส่งล้มเหลวไม่มี retry อัตโนมัติ รายละเอียด field อยู่ใน [protocol](docs/protocol.md)
-
-หลังติดตั้ง firmware บนอุปกรณ์ในอนาคต สามารถทดสอบ POST ด้วยตัวอย่างที่ normalize แล้ว (แทน host และ token ด้วยค่าจริงจากการตั้งค่าของคุณ):
-
-```sh
-rtk proxy curl --fail-with-body --request POST \
-  --header 'Content-Type: application/json' \
-  --header 'Authorization: Bearer REPLACE_WITH_DEVICE_TOKEN' \
-  --data-binary @examples/usage-response.json \
-  http://192.168.4.1/api/usage
-```
-
-sender และ fixtures ไม่ fetch weather หรือหุ้นบน Mac อากาศใช้แหล่งที่ ESP32 ตั้งค่าเอง เช่น Open-Meteo ผ่าน portal Firmware target คือ ESP32-2432S028R / ESP32-D0WD-V3 rev 3.1 พร้อม 4 MiB flash ไม่มี PSRAM ใช้ LCD SPI2 และ touch SPI3 แยกกัน ภาพแนวตั้ง สี และ corner mapping ยังต้องตรวจบนบอร์ดจริง
-
-## ตรวจสอบ source โดยไม่ต่อบอร์ด
-
-```sh
-rtk proxy .venv/bin/python scripts/test_firmware.py
-rtk proxy .venv/bin/python -m unittest discover -s tests -p 'test_*.py' -v
-rtk proxy node --test tests/stocks_endpoint.test.cjs tests/portal.test.cjs
-rtk proxy .venv/bin/python scripts/pio.py run -d firmware -e cyd
-rtk proxy .venv/bin/python scripts/package_firmware.py
-```
-
-ติดตั้ง build dependencies ตาม [firmware guide](firmware/README.md) ก่อน ภาพรวมสำหรับติดตั้งครั้งแรกและ app-only สำหรับอัปเดตอยู่ใน `artifacts/` ที่ไม่ commit; script ตรวจทุก segment/offset/SHA256 โดยไม่ใช้ serial ดู [third-party notices](THIRD_PARTY_NOTICES.md) เมื่อแจก firmware
-
-Firmware 2.0.0 ใช้ dual OTA slots; บอร์ด layout เดิมต้องใช้ [segmented USB migration](firmware/README.md#ota-และ-usb-migration-ที่รักษาการตั้งค่า) ครั้งเดียวเพื่อรักษา Wi-Fi/admin/token/endpoint/touch calibration. เจ้าของบอร์ดนี้ระบุไม่สร้าง backup ใหม่ จึงใช้ `scripts/migrate_ota.py --port PORT --flash --skip-backup`; ตรวจ dry run ก่อน ทุกการอัปเดตผ่าน Wi-Fi ใช้ `desk-duo-app.bin` และ Basic admin เดิม ห้ามเขียน merged image ทับบอร์ดที่ตั้งค่าแล้ว
+Generated assets ถูกเก็บพร้อม source จึง build firmware ได้โดยไม่ต้องสร้างภาพ/ฟอนต์ใหม่ ดู [asset pipeline](firmware/assets/README.md) และ [third-party notices](THIRD_PARTY_NOTICES.md) สำหรับที่มาและใบอนุญาตของส่วนประกอบ โปรเจกต์ยังไม่ได้เลือกใบอนุญาตสำหรับโค้ดที่เขียนเพิ่ม

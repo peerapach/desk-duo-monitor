@@ -12,9 +12,9 @@
 
 ตัวอย่างที่ผู้ใช้เลือก:
 
-- Layout: `/Users/peerapach.v/.codex/visualizations/2026/10/04/01a10497-c77a-7533-a410-77b7fc0e9aca/desk-duo-preview.html`
-- Weather: `/Users/peerapach.v/.codex/visualizations/2026/10/04/01a10497-c77a-7533-a410-77b7fc0e9aca/desk-weather-preview.html`
-- Stocks: `/Users/peerapach.v/.codex/visualizations/2026/10/04/01a10497-c77a-7533-a410-77b7fc0e9aca/desk-stocks-preview.html`
+- Layout: `local design preview (not distributed)`
+- Weather: `local design preview (not distributed)`
+- Stocks: `local design preview (not distributed)`
 
 ตัวเลขใน mockup เป็นข้อมูลจำลองทั้งหมด
 

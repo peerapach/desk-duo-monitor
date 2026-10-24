@@ -1,5 +1,7 @@
 #include "network.hpp"
+#include "weather_request.hpp"
 #include "runtime.hpp"
+#include "stock_source.hpp"
 #include "ota_policy.hpp"
 #include "esp_crt_bundle.h"
 #include "esp_event.h"
@@ -205,6 +207,7 @@ std::optional<std::string> fetch(const SourceConfig& source, WeatherAttempt* att
         auto client = esp_http_client_init(&cfg);
         if (!client) { failAttempt(attempt, WeatherOutcome::HttpAllocation, WeatherPhase::Http, true); esp_transport_destroy(adapter); return std::nullopt; }
         esp_http_client_set_header(client, "Accept", "application/json");
+        esp_http_client_set_header(client, "User-Agent", "DeskDuo/1.0");
         esp_http_client_set_header(client, "Connection", "close");
         bool headersOk = true;
         if (policy.sendHeaders) for (const auto& [key, value] : source.headers)
@@ -309,7 +312,9 @@ void network_task(void*) {
         if (generation != request.generation) { generation = request.generation; weatherDue = stocksDue = 0; }
         if (online && !config.weather.url.empty() && now >= weatherDue) {
             auto attempt = weatherDiagnostics.begin(request.generation, now_ms(), std::time(nullptr) >= 1700000000);
-            auto data = fetch(config.weather, &attempt);
+            auto effectiveWeather = config.weather;
+            effectiveWeather.url = weather_request_url(config.weather);
+            auto data = fetch(effectiveWeather, &attempt);
             const auto parsed = data ? parseWeather(*data, config.weather) : ParseResult<Weather>{std::nullopt, "unavailable"};
             runtime_weather(parsed, request.generation);
             if (data) {
@@ -328,9 +333,20 @@ void network_task(void*) {
             continue; // Re-capture config/generation before starting another source.
         }
         // Re-capture next iteration after weather; old generation remains ineligible.
-        if (online && !config.stocks.url.empty() && now_ms() >= stocksDue) {
-            auto data = fetch(config.stocks);
-            runtime_stocks(data ? parseStocks(*data) : ParseResult<Stocks>{std::nullopt, "unavailable"}, request.generation);
+        if (online && (config.stocks.provider == StockProvider::Yahoo || !config.stocks.url.empty()) && now_ms() >= stocksDue) {
+            if(config.stocks.provider == StockProvider::Yahoo) {
+                const auto previous = runtime_snapshot().stocks.data;
+                auto result = pollYahooStocks(config.stocks, previous ? &*previous : nullptr, std::time(nullptr),
+                    [&](const SourceConfig& source) -> std::optional<std::string> {
+                        // Stop this batch after settings changes or OTA admission.
+                        if(maintenance.updating() || runtime_config().generation != request.generation) return std::nullopt;
+                        return fetch(source);
+                    });
+                runtime_stocks(result, request.generation);
+            } else {
+                auto data = fetch(config.stocks);
+                runtime_stocks(data ? parseStocks(*data) : ParseResult<Stocks>{std::nullopt, "unavailable"}, request.generation);
+            }
             stocksDue = now_ms() + config.stocks.refreshSeconds * 1000ULL;
         }
         vTaskDelay(pdMS_TO_TICKS(250));

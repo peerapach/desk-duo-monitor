@@ -162,20 +162,23 @@ void stocksContract(const std::string& root) {
 
 void weatherContract(const std::string& root) {
     auto source = deskduo::defaultConfig().weather;
+    CHECK(!deskduo::parseWeather(R"({"current":{"temperature_2m":25,"is_day":2}})", source).value);
     const auto simulated = deskduo::parseWeather(readFile(root + "/examples/weather-response.json"), source);
     CHECK(simulated.value.has_value());
-    CHECK(simulated.value->hourlyCount == 4U);
-    // forecast_hours=4 at 12:45 returns the current hour plus three more.
-    // Keep corresponding time/temperature/rain entries aligned by index.
+    CHECK(simulated.value->hourlyCount == 3U);
+    // The source observation at 12:45 excludes the past 12:00 sample.
     CHECK(simulated.value->updatedAt == 1791092700LL);
-    CHECK(simulated.value->hourlyTimes[0] == 1791090000LL);
-    CHECK(simulated.value->hourlyTimes[1] == 1791093600LL);
-    CHECK(simulated.value->hourlyTimes[2] == 1791097200LL);
-    CHECK(simulated.value->hourlyTimes[3] == 1791100800LL);
-    CHECK(simulated.value->hourlyTemperatures[0] == 31.2);
-    CHECK(simulated.value->hourlyTemperatures[3] == 29.5);
-    CHECK(simulated.value->hourlyRainProbability[0] == 5);
-    CHECK(simulated.value->hourlyRainProbability[3] == 15);
+    CHECK(simulated.value->hourlyTimes[0] == 1791093600LL);
+    CHECK(simulated.value->hourlyTimes[2] == 1791100800LL);
+    CHECK(!simulated.value->hourlyTimes[3]);
+    CHECK(simulated.value->hourlyTemperatures[0] == 31.7);
+    CHECK(simulated.value->hourlyTemperatures[2] == 29.5);
+    CHECK(simulated.value->hourlyRainProbability[0] == 10);
+    CHECK(simulated.value->hourlyRainProbability[2] == 15);
+    CHECK(simulated.value->isDay == true);
+    CHECK(simulated.value->hourlyWeatherCodes[0] == 2);
+    CHECK(simulated.value->hourlyWeatherCodes[2] == 61);
+    CHECK(simulated.value->hourlyIsDay[2] == true);
     CHECK(!deskduo::parseWeather(R"({})", source).value.has_value());
     CHECK(!deskduo::parseWeather(R"({"error":true,"reason":"invalid location"})", source).value.has_value());
     const auto explicitNoError = deskduo::parseWeather(
@@ -207,6 +210,66 @@ void weatherContract(const std::string& root) {
     CHECK(!deskduo::parseWeather(R"({"current":{"relative_humidity_2m":100.1}})", source).value.has_value());
     CHECK(!deskduo::parseWeather(R"({"current":{"temperature_2m":true}})", source).value.has_value());
     CHECK(!deskduo::parseWeather(R"({"current":{"time":"2026-10-04T12:00.5"}})", source).value.has_value());
+
+    // Legacy stored mappings omit new keys; defaults still fill them in.
+    auto legacy = source;
+    legacy.fields = {{"temperature", "current.temperature_2m"}, {"humidity", "current.relative_humidity_2m"},
+        {"weatherCode", "current.weather_code"}, {"updatedAt", "current.time"},
+        {"utcOffsetSeconds", "utc_offset_seconds"}, {"hourlyTimes", "hourly.time"},
+        {"hourlyTemperatures", "hourly.temperature_2m"}, {"hourlyRainProbability", "hourly.precipitation_probability"}};
+    const auto sliced = deskduo::parseWeather(R"({"current":{"temperature_2m":25,"is_day":0,"time":"2026-10-04T02:00Z"},"hourly":{"time":["2026-10-04T00:00Z","2026-10-04T01:00Z","2026-10-04T02:00Z","2026-10-04T03:00Z","2026-10-04T04:00Z","2026-10-04T05:00Z","2026-10-04T06:00Z"],"temperature_2m":[1,2,3,4,5,6,7],"precipitation_probability":[10,20,30,40,50,60,70],"weather_code":[0,1,2,3,61,95,99],"is_day":[0,0,0,1,true,false,1]}})", legacy);
+    CHECK(sliced.value);
+    CHECK(sliced.value->isDay == false);
+    CHECK(!sliced.value->utcOffsetSeconds);
+    CHECK(sliced.value->hourlyCount == 4);
+    CHECK(sliced.value->hourlyTimes[0] == 1791079200LL);
+    CHECK(sliced.value->hourlyTimes[3] == 1791090000LL);
+    CHECK(sliced.value->hourlyTemperatures[0] == 3);
+    CHECK(sliced.value->hourlyTemperatures[3] == 6);
+    CHECK(sliced.value->hourlyRainProbability[0] == 30);
+    CHECK(sliced.value->hourlyRainProbability[3] == 60);
+    CHECK(sliced.value->hourlyWeatherCodes[0] == 2);
+    CHECK(sliced.value->hourlyWeatherCodes[3] == 95);
+    CHECK(sliced.value->hourlyIsDay[0] == false);
+    CHECK(sliced.value->hourlyIsDay[1] == true);
+    CHECK(sliced.value->hourlyIsDay[2] == true);
+    CHECK(sliced.value->hourlyIsDay[3] == false);
+    CHECK(!weather.value->isDay && !weather.value->hourlyWeatherCodes[0] && !weather.value->hourlyIsDay[0]);
+    // Unknown offset must not turn local source times into UTC or discard them.
+    const auto unknownForecast = deskduo::parseWeather(R"({"current":{"temperature_2m":25,"is_day":true,"time":"2026-10-04T02:00"},"hourly":{"time":["2026-10-04T00:00","2026-10-04T01:00"],"temperature_2m":[10,11],"weather_code":[null,3],"is_day":[null,0]}})", source);
+    CHECK(unknownForecast.value && !unknownForecast.value->updatedAt);
+    CHECK(unknownForecast.value->isDay == true);
+    CHECK(unknownForecast.value->hourlyCount == 2);
+    CHECK(!unknownForecast.value->hourlyTimes[0]);
+    CHECK(unknownForecast.value->hourlyTemperatures[0] == 10);
+    CHECK(!unknownForecast.value->hourlyWeatherCodes[0]);
+    CHECK(unknownForecast.value->hourlyWeatherCodes[1] == 3);
+    CHECK(!unknownForecast.value->hourlyIsDay[0]);
+    CHECK(unknownForecast.value->hourlyIsDay[1] == false);
+    const auto unequal = deskduo::parseWeather(R"({"current":{"temperature_2m":25},"hourly":{"temperature_2m":[null,12,13],"weather_code":[61],"is_day":[false,null]}})", source);
+    CHECK(unequal.value && unequal.value->hourlyCount == 3);
+    CHECK(unequal.value->hourlyWeatherCodes[0] == 61 && !unequal.value->hourlyWeatherCodes[1]);
+    CHECK(unequal.value->hourlyIsDay[0] == false && !unequal.value->hourlyIsDay[1]);
+    CHECK(!unequal.value->hourlyTemperatures[0] && unequal.value->hourlyTemperatures[2] == 13);
+    for (const auto* invalid : {"2", "-1", "0.5", "\"1\"", "{}", "[]"}) {
+        CHECK(!deskduo::parseWeather(std::string("{\"current\":{\"temperature_2m\":25,\"is_day\":") + invalid + "}}", source).value);
+        CHECK(!deskduo::parseWeather(std::string("{\"current\":{\"temperature_2m\":25},\"hourly\":{\"is_day\":[") + invalid + "]}}", source).value);
+    }
+    for (const auto* invalid : {"4", "-1", "100", "1.5", "true", "\"61\"", "{}"}) {
+        CHECK(!deskduo::parseWeather(std::string("{\"current\":{\"temperature_2m\":25},\"hourly\":{\"weather_code\":[") + invalid + "]}}", source).value);
+    }
+    CHECK(!deskduo::parseWeather(R"({"current":{"temperature_2m":25},"hourly":{"time":["bad"],"weather_code":[0]}})", source).value);
+    CHECK(!deskduo::parseWeather(R"({"current":{"temperature_2m":25},"hourly":{"time":["2026-10-04T03:00Z","2026-10-04T02:00Z"]}})", source).value);
+    auto custom = source;
+    custom.fields["isDay"] = "day";
+    custom.fields["hourlyWeatherCodes"] = "codes";
+    custom.fields["hourlyIsDay"] = "days";
+    const auto remapped = deskduo::parseWeather(R"({"day":false,"codes":[61,99],"days":[1,0]})", custom);
+    CHECK(remapped.value && remapped.value->isDay == false);
+    CHECK(remapped.value->hourlyWeatherCodes[1] == 99 && remapped.value->hourlyIsDay[1] == false);
+    const auto configWithMappings = deskduo::applyConfigPatch(deskduo::defaultConfig(), R"({"weather":{"fields":{"temperature":"current.temperature_2m","humidity":"current.relative_humidity_2m","weatherCode":"current.weather_code","updatedAt":"current.time","utcOffsetSeconds":"utc_offset_seconds","hourlyTimes":"hourly.time","hourlyTemperatures":"hourly.temperature_2m","hourlyRainProbability":"hourly.precipitation_probability","isDay":"current.is_day","hourlyWeatherCodes":"hourly.weather_code","hourlyIsDay":"hourly.is_day"}}})");
+    CHECK(configWithMappings.value && configWithMappings.value->weather.fields.size() == 11);
+    CHECK(deskduo::parseStoredConfig(deskduo::serializeConfig(*configWithMappings.value)).value);
 
     auto indexed = source;
     indexed.fields["temperature"] = "measurements[0].temperature";
@@ -339,9 +402,59 @@ void configContract(const std::string& root) {
     CHECK(cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(weatherMetadata, "urlDetailsHidden")));
     CHECK(cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(stocksMetadata, "urlDetailsHidden")));
     CHECK(cJSON_GetArraySize(weatherMetadata) == 6);
-    CHECK(cJSON_GetArraySize(stocksMetadata) == 4);
+    CHECK(cJSON_GetArraySize(stocksMetadata) == 7);
     cJSON_Delete(publicJson);
 
+
+    // Only validated Open-Meteo coordinate pairs are public; all other query
+    // values and headers stay private, and metadata is read-only.
+    auto meteo = internal;
+    meteo.weather.url = "https://api.open-meteo.com/v1/forecast?latitude=13.7563&longitude=100.5018&apikey=coordinate-secret";
+    const auto meteoPublic = deskduo::redactedConfig(meteo);
+    cJSON* meteoJson = cJSON_Parse(meteoPublic.c_str());
+    const cJSON* meteoWeather = cJSON_GetObjectItemCaseSensitive(meteoJson, "weather");
+    const cJSON* latitude = cJSON_GetObjectItemCaseSensitive(meteoWeather, "latitude");
+    const cJSON* longitude = cJSON_GetObjectItemCaseSensitive(meteoWeather, "longitude");
+    CHECK(cJSON_IsNumber(latitude) && latitude->valuedouble == 13.7563);
+    CHECK(cJSON_IsNumber(longitude) && longitude->valuedouble == 100.5018);
+    CHECK(meteoPublic.find("coordinate-secret") == std::string::npos);
+    CHECK(meteoPublic.find("feed-secret") == std::string::npos);
+    CHECK(meteoPublic.find("?latitude") == std::string::npos);
+    cJSON_Delete(meteoJson);
+    CHECK(deskduo::serializeConfig(meteo).find(R"("latitude":)") == std::string::npos);
+    CHECK(!deskduo::applyConfigPatch(meteo, R"({"weather":{"latitude":13,"longitude":100}})").value.has_value());
+    CHECK(!deskduo::parseStoredConfig(meteoPublic).value.has_value());
+    const auto labelOnly = deskduo::applyConfigPatch(meteo, R"({"weather":{"label":"New label","refreshSeconds":1200}})");
+    CHECK(labelOnly.value.has_value());
+    CHECK(labelOnly.value->weather.url == meteo.weather.url);
+    CHECK(labelOnly.value->weather.headers == meteo.weather.headers);
+    for (const auto& url : std::vector<std::string>{
+        "https://api.open-meteo.com/v1/forecast?latitude=91&longitude=100",
+        "https://api.open-meteo.com/v1/forecast?latitude=13&longitude=-181",
+        "https://api.open-meteo.com/v1/forecast?latitude=&longitude=100",
+        "https://api.open-meteo.com/v1/forecast?latitude=13",
+        "https://api.open-meteo.com/v1/forecast?latitude=NaN&longitude=100",
+        "https://api.open-meteo.com/v1/forecast?latitude=inf&longitude=100",
+        "https://api.open-meteo.com/v1/forecast?latitude=13junk&longitude=100",
+        "https://api.open-meteo.com/v1/forecast?latitude=0x1&longitude=100",
+        "https://api.open-meteo.com/v1/forecast?latitude=13&latitude=14&longitude=100",
+        "https://api.open-meteo.com/v1/forecast?latitude=13&longitude=100&longitude=101",
+        "https://api.open-meteo.com/v1/forecast?latitude=13&longitude=100&%6catitude=14",
+        "https://api.open-meteo.com/v1/forecast?latitude=13&longitude=100#secret",
+        "http://api.open-meteo.com/v1/forecast?latitude=13&longitude=100",
+        "https://api.open-meteo.com:444/v1/forecast?latitude=13&longitude=100",
+        "https://user@api.open-meteo.com/v1/forecast?latitude=13&longitude=100",
+        "https://api.open-meteo.com.evil/v1/forecast?latitude=13&longitude=100",
+        "https://api.open-meteo.com/v1/other?latitude=13&longitude=100"}) {
+        meteo.weather.url = url;
+        const auto output = deskduo::redactedConfig(meteo);
+        CHECK(output.find(R"("latitude":)") == std::string::npos);
+        CHECK(output.find(R"("longitude":)") == std::string::npos);
+    }
+    for (const auto& query : {"latitude=0&longitude=0", "latitude=-90&longitude=180", "latitude=90&longitude=-180"}) {
+        meteo.weather.url = std::string("https://api.open-meteo.com/v1/forecast?") + query;
+        CHECK(deskduo::redactedConfig(meteo).find(R"("latitude":)") != std::string::npos);
+    }
 
     const auto unset = deskduo::redactedConfig(config);
     CHECK(unset.find(R"("currentSSID":"")") != std::string::npos);
@@ -494,6 +607,15 @@ void redirectAndTouchContract() {
 }  // namespace
 
 int main(int argc, char** argv) {
+    // Let browser tests consume the production public serializer, rather than
+    // an accidentally unredacted GET fixture.
+    if (argc == 3 && std::string(argv[1]) == "--public-weather-config") {
+        auto config = deskduo::defaultConfig();
+        config.weather.url = argv[2];
+        config.weather.headers = {{"X-Feed", "header-secret"}};
+        std::cout << deskduo::redactedConfig(config);
+        return 0;
+    }
     CHECK(deskduo::parseDisplayPreference(R"({"brightnessAuto":true,"brightnessDayStart":"07:15","brightnessNightStart":"19:45"})").value);
     for (const auto* bad : {R"({"brightnessAuto":1})",R"({"brightnessAuto":null})",R"({"brightnessAuto":false,"brightnessAuto":true})",R"({"brightnessDayStart":"6:00"})",R"({"brightnessDayStart":"24:00"})",R"({"brightnessNightStart":"00:60"})",R"({"brightnessNightStart":360})",R"({"brightnessDayStart":"06:00x"})",R"({"brightnessPhase":"day"})",R"({"brightnessTargetPercent":5})",R"({"brightnessEffectivePercent":5})"}) CHECK(!deskduo::parseDisplayPreference(bad).value);
     { deskduo::DisplayPreference pref; int writes=0;
@@ -598,9 +720,21 @@ int main(int argc, char** argv) {
         deskduo::FetchPolicy downgrade("https://one.test", 0);
         CHECK(!downgrade.redirect("http://one.test"));
         CHECK(downgrade.url == "https://one.test");
-        CHECK(deskduo::shapeText("ปิ๊") == "ป\uf701\uf714");
-        CHECK(deskduo::shapeText("ญุ") == "ญ\uf717");
-        CHECK(deskduo::shapeText("กิ่") == "กิ\uf70d");
+        // Sarabun GSUB: narrow i + compact mai-tri; F731 is the tall E34 context.
+        CHECK(deskduo::shapeText("ปิ๊") == "ป\uf701\uf731");
+        // Source uses yoYingthai.less before a below vowel, retaining the normal base otherwise.
+        CHECK(deskduo::shapeText("ญุ") == "\uf71a\uf717");
+        CHECK(deskduo::shapeText("ญ") == "ญ");
+        CHECK(deskduo::shapeText("ฐู") == "\uf71b\uf718");
+        CHECK(deskduo::shapeText("ฐ") == "ฐ");
+        // F72A is compact mai-ek above E34; default F70D belongs to the E35 context.
+        CHECK(deskduo::shapeText("กิ่") == "กิ\uf72a");
+        // Source's E4D+tone ligature already contains the above dot.
+        CHECK(deskduo::shapeText("กํ่") == "ก\uf752");
+        for (const char* text : {"ปิ๊", "ญุ", "ฐู", "กิ่", "กํ่", "ปํ้", "กํ์"}) {
+            const auto shaped = deskduo::shapeText(text);
+            CHECK(deskduo::shapeText(shaped) == shaped);
+        }
         CHECK(deskduo::shapeText("Claude 32% หุ้น") == "Claude 32% หุ้น");
         CHECK(deskduo::shapeText("☃") == "?");
         CHECK(deskduo::compactNumber(1e300).size() < 16);
@@ -646,6 +780,11 @@ int main(int argc, char** argv) {
         selected.secondary=deskduo::UsageWindow{12,300,{}};CHECK(!deskduo::codexWeeklyWindow(selected));
         selected.primary.reset();selected.secondary->windowMinutes=10080;CHECK(deskduo::codexWeeklyWindow(selected)->usedPercent==12);
         selected.secondary.reset();CHECK(!deskduo::codexWeeklyWindow(selected));
+        // Direct-stock settings must be accepted and preserved by sparse saves.
+        auto direct = deskduo::applyConfigPatch(deskduo::defaultConfig(),
+            R"({"stocks":{"provider":"yahoo","watchlist":[{"symbol":"PTT.BK","enabled":true}],"chartRange":"5d"}})");
+        CHECK(direct.value.has_value());
+        CHECK(deskduo::completeSerialization(*direct.value, deskduo::serializeConfig(*direct.value)));
         usageContract(root);
         stocksContract(root);
         weatherContract(root);

@@ -10,7 +10,8 @@ inline bool completeSerialization(const Config& expected, const std::string& jso
     if (!parsed.value) return false;
     const auto& actual = *parsed.value;
     auto sameSource = [](const SourceConfig& a, const SourceConfig& b) {
-        return a.url == b.url && a.headers == b.headers && a.refreshSeconds == b.refreshSeconds && a.label == b.label && a.fields == b.fields;
+        return a.url == b.url && a.headers == b.headers && a.refreshSeconds == b.refreshSeconds && a.label == b.label && a.fields == b.fields &&
+            a.provider == b.provider && a.watchlist == b.watchlist && a.watchCount == b.watchCount && a.chartRange == b.chartRange;
     };
     const auto& a = actual.touch; const auto& b = expected.touch;
     return actual.ssid == expected.ssid && actual.wifiPassword == expected.wifiPassword &&

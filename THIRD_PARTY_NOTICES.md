@@ -35,9 +35,13 @@ SOFTWARE.
 Copyright 2018 The Sarabun Project Authors (https://github.com/cadsondemak/Sarabun).
 SIL Open Font License 1.1; full license: [Sarabun-OFL.txt](firmware/main/fonts/Sarabun-OFL.txt).
 
-Generated/subset font names are `ct_font_thai_12` and `ct_font_thai_14`; their original generated C sources are preserved, with no conversion edits. Provenance is the tamaclaude revision above (the generator does not record the upstream Sarabun Git revision). The actual bundled Sarabun-Regular.ttf input has SHA256 `226d4f368fbc0457990ddef2692679badfd2c1a4e89e5ac4d43c10ba7743b2f1`. Font source and generation references at that same revision: `tools/fonts/Sarabun-Regular.ttf`, `tools/export_thai_font.py`, `tools/thai.toml`, `tools/gen/thai.py`, and `tools/gen/thai_table.py`.
+The original Thai font/shaping integration was adapted from the tamaclaude revision above. Current generated Thai, UI and numeric subsets are rebuilt with `scripts/export_thai_fonts.py` from the bundled Sarabun Medium and SemiBold sources in `firmware/main/fonts/source/`, under the same Sarabun OFL. Generated C headers record each source SHA256. The exporter uses FreeType and HarfBuzz during authoring only.
 
-The generated cmaps cover U+0E01–U+0E3A, U+0E3F–U+0E5B, and U+F700–U+F719. Montserrat supplies ASCII and degree sign; unsupported display characters are rendered as `?`. The shaper maps upper/lower/tone marks onto the supplied variants and normalizes already-shaped input. Composite line metrics preserve marks above and below Latin text.
+Subsets include Thai at12/14/18px, shared Thai/ASCII UI roles at16/18px, and numeric roles at24/48px. The shaping variants cover U+F700–U+F71B and U+F720–U+F765 in addition to standard Thai ranges. LVGL Montserrat supplies other Latin text. Preserve both Sarabun and Montserrat license files when redistributing.
+
+## Artwork
+
+Character and weather source assets are included under `firmware/assets/`; their selection and conversion provenance is described in its README. The Claude and Codex identities are used to identify the corresponding services. This repository does not grant rights to third-party trademarks.
 
 ## Build dependencies
 

@@ -1,6 +1,9 @@
 # Desk Duo firmware (CYD แนวตั้ง)
 
-Source receiver และ build สำหรับ ESP32-2432S028R / ESP32-D0WD-V3 / flash 4 MiB / ไม่มี PSRAM จอ 240×320 ใช้ LVGL 9.2.2, ESP-IDF 5.5.3 ผ่าน espressif32 6.13.0 รองรับ OTA ภายในเครือข่ายด้วย Basic admin และ boot rollback; ผลทดสอบ hardware ต้องบันทึกแยกจาก build/native tests
+หุ้นไทย/US และกราฟเล็ก: [คู่มือ Yahoo Finance](../docs/stocks.md)
+ค่าที่บันทึกแบบ JSON endpoint เดิมยังโหลดได้โดยไม่เปลี่ยน provider เอง
+
+Source receiver และ build สำหรับ Desk Duo Firmware 2.2.3 บน ESP32-2432S028R / ESP32-D0WD-V3 / flash 4 MiB / ไม่มี PSRAM จอ 240×320 ใช้ LVGL 9.2.2, ESP-IDF 5.5.3 ผ่าน espressif32 6.13.0 รองรับ OTA ภายในเครือข่ายด้วย Basic admin และ boot rollback; build/native tests ไม่ยืนยันการทำงานบนอุปกรณ์หรือความถูกต้องของ live source
 
 ## Build และตรวจสอบบน Mac
 
@@ -32,6 +35,12 @@ Package สร้าง `artifacts/desk-duo-cyd.bin`, `.sha256`, `.json`, `desk-
 
 ทดสอบ portal กับ DOM จริงแบบ offline เพิ่มเติมได้เมื่อมี Playwright และ Chromium อยู่แล้ว (ไม่ติดตั้ง/ดาวน์โหลดจาก test): ตั้ง `NODE_PATH` ให้ชี้ runtime ที่มี `playwright` และถ้าต้องใช้ Chromium ที่มีอยู่คนละ revision ให้ตั้ง `PLAYWRIGHT_CHROMIUM_EXECUTABLE` เป็น absolute path แล้วรัน `rtk proxy node --test tests/portal_dom.cjs` Test ปิด network requests ทั้งหมดและใช้ fixture ภายในเครื่อง ภาพทั้งสองภาษาอยู่ที่ `.platformio/native-ui-regression/portal-language-{th,en}.png`
 
+## Web Admin
+
+Web Admin มีหกส่วน: **Display**, **AI usage**, **Weather**, **Stocks**, **Wi-Fi** และ **Firmware**. จอกว้างใช้ sidebar; มือถือใช้ section selector. เปลี่ยนภาษาไทย/English หรือเปลี่ยนส่วนแล้ว draft ยังอยู่ แต่ละส่วนมีปุ่มบันทึกและยกเลิกของตัวเอง และแสดง saved values จาก API แยกจากค่าที่แก้ค้างไว้ ข้อความสถานะและข้อผิดพลาดมาจากคำตอบจริงของอุปกรณ์
+
+Display จัดการภาษา ความสว่างฐาน 5–100% และตาราง Auto brightness; เวลาเริ่มกลางวัน/กลางคืนใช้ clock บน ESP32 โดยกลางวันใช้ฐานเต็มและกลางคืนใช้ครึ่งหนึ่ง (ขั้นต่ำ 5%). AI usage เลือกแสดง Codex ทั้ง 5-hour กับ Weekly หรือ Weekly อย่างเดียว และแก้ usage token โดยไม่เปิดเผยค่าที่บันทึกไว้. Weather มีตัวแก้ Open-Meteo สำหรับชื่อและพิกัด พร้อม Advanced สำหรับ endpoint, headers และ mappings เดิม; Stocks คงตัวเลือก Yahoo/legacy และช่วง Today/5 days; Wi-Fi แสดง SSID ที่บันทึกและสถานะว่ามี secret โดยช่องรหัสว่างคงค่าปัจจุบัน. Firmware อ่าน version/capacity จาก API และแสดงชื่อกับขนาดไฟล์จริงให้ตรวจ ก่อนขั้น upload ที่ยังใช้ auth/validation เดิม
+
 ## ตั้งค่าหลังติดตั้งบนบอร์ดในอนาคต
 
 จอแรกแสดง SSID `DeskDuo-xxxxxx`, รหัส WPA2 แบบสุ่ม 12 ตัว, URL `http://192.168.4.1`, และ Usage bearer token แบบสุ่ม 32 hex เชื่อม AP แล้วเปิด URL ใช้ HTTP Basic username `admin` และรหัสเดียวกับ AP การเชื่อมต่อ portal เป็น HTTP ภายในเครือข่าย local; ใช้ AP ที่มีรหัสหรือ LAN ที่เชื่อถือได้
@@ -40,9 +49,9 @@ Package สร้าง `artifacts/desk-duo-cyd.bin`, `.sha256`, `.json`, `desk-
 
 ตั้ง Wi-Fi, URL อากาศ/หุ้น, headers แบบ JSON, field mappings, refresh 30–86400 วินาที, auto rotation 0/ปิด หรือ 5–300 วินาที และ token จาก portal ค่า SSID/password/token/URL/headers ที่เว้นว่างจะคงค่าเดิม การล้าง Wi-Fi หรือ URL ต้องเลือกช่องล้าง; headers `{}` คือล้างทั้งหมด GET settings สำหรับ Basic admin แสดง SSID ที่บันทึก (ไม่ใช่หลักฐานว่า radio ต่อเครือข่ายนี้อยู่), URL ที่ตัด query/fragment และสถานะตั้งค่าแล้ว/ยังไม่ตั้งค่าของรหัส Wi-Fi, usage token และ headers โดยไม่เปิดเผยค่าลับ ช่องแทนที่ URL/รหัส/token/headers ยังคงว่าง และส่งเฉพาะค่าที่แก้ไขจาก snapshot ที่โหลดสำเร็จ; ไม่แก้ไขจะไม่ POST หากโหลดไม่สำเร็จจะแสดงไม่ทราบและปิดบันทึก หากบันทึกสำเร็จแต่โหลดใหม่ล้มเหลวจะแจ้งว่าบันทึกแล้วและต้องโหลดหน้าใหม่ก่อนแก้ต่อ metadata นี้อยู่เฉพาะ public response ไม่เปลี่ยน Config หรือ bytes ใน NVS ส่วน Codex display form ยังโหลด/บันทึกแยกกัน
 
-เลือกภาษาไทย / English สำหรับทั้งจอและเว็บในฟอร์มการแสดงผล ค่าเริ่มต้นคือภาษาไทยเมื่อยังไม่เคยบันทึกภาษา เปลี่ยนตัวเลือกแล้วเว็บแสดงภาษานั้นให้ตรวจได้ก่อนบันทึก พร้อมแสดงภาษาที่บันทึกอยู่ บันทึกสำเร็จแล้วจอเปลี่ยนหน้าเดิมทันทีและจำค่าหลัง reboot ชื่อสถานที่/SSID/ชื่อหุ้นและค่าที่ผู้ใช้กรอกไม่ถูกแปล
+เลือกภาษาไทย / English สำหรับทั้งจอและเว็บในส่วน Display ค่าเริ่มต้นคือภาษาไทยเมื่อยังไม่เคยบันทึกภาษา เปลี่ยนตัวเลือกแล้วเว็บแสดงภาษานั้นให้ตรวจได้ก่อนบันทึก พร้อมแสดงภาษาที่บันทึกอยู่ บันทึกสำเร็จแล้วจอเปลี่ยนหน้าเดิมทันทีและจำค่าหลัง reboot ชื่อสถานที่/SSID/ชื่อหุ้นและค่าที่ผู้ใช้กรอกไม่ถูกแปล
 
-เลือกการแสดง usage ของ Codex ในฟอร์มเดียวกัน: `5h + Weekly` (ค่าเริ่มต้น) หรือ `Weekly อย่างเดียว` บันทึกแล้วจอเปลี่ยนทันทีโดยไม่ reboot ฟอร์มนี้ไม่เปลี่ยน Wi-Fi/แหล่งข้อมูล/ค่าลับ และยังกดบันทึกไม่ได้จนโหลดค่าปัจจุบันสำเร็จ
+เลือกการแสดง usage ของ Codex ในส่วน AI usage: `5h + Weekly` (ค่าเริ่มต้น) หรือ `Weekly อย่างเดียว` บันทึกแล้วจอเปลี่ยนทันทีโดยไม่ reboot การบันทึกส่วนนี้ไม่เปลี่ยน Wi-Fi/แหล่งข้อมูล และยังกดบันทึกไม่ได้จนโหลดค่าปัจจุบันสำเร็จ
 
 ความสว่างฐานปรับได้ 5–100% ค่าเริ่มต้น 100% ในเว็บ เลื่อน slider เพื่อเลือกค่าฐาน แล้วกด **บันทึกการแสดงผล / Save display settings** เพื่อส่งเฉพาะ field ที่เปลี่ยน ค่าฐานที่บันทึกไม่ถูกเขียนทับด้วยค่าที่คำนวณตามเวลา เว็บแสดง mode/ภาษา/ฐาน/Auto/เวลาเริ่มกลางวันและกลางคืนที่บันทึก แยกจาก target (ค่าที่ต้องการ) และ last applied (คำขอปรับแสงที่ฮาร์ดแวร์รับสำเร็จล่าสุด ไม่ใช่การวัดแสงจริง; null คือยังไม่ทราบ)
 
@@ -56,7 +65,7 @@ Package สร้าง `artifacts/desk-duo-cyd.bin`, `.sha256`, `.json`, `desk-
 
 ค่าการแสดงผลเก็บแยกใน NVS namespace `deskduo`, scalar u32 key `ui_pref_v3`: mode bit0, ภาษา bit1, ฐาน bits2–8, Auto bit9, นาทีเริ่มกลางวัน bits10–20 และกลางคืน bits21–31 หาก v3 ไม่มี/typeผิด/ไม่ถูกต้อง จะ fallback v2 ที่ถูกต้อง (คงmode/ภาษา/ฐาน พร้อม Autoปิด/06:00/18:00) แล้ว `ui_pref`, `codex_layout`, defaults โดยไม่เขียนระหว่าง migration ค่าเก่าและ Config blob ไม่เปลี่ยน Single scalar บันทึกครบหก field: ESP-IDF ที่ pin ไว้เขียน NVS ตอน set ส่วน commit ยังเป็น no-op หลัง set/commit สำเร็จจึงเผยแพร่ preference พร้อมกัน ถ้า commit คืน failure จะคง active preference เดิม แม้ set อาจบันทึก scalar ใหม่ครบแล้ว
 
-โหมดทั้งสองแสดง duration/reset ตามข้อมูลจริง และเรียกช่วง Codex 10080 นาทีว่า Weekly โหมด weekly เลือกช่วง 10080 นาทีจาก primary ก่อน secondary ถ้าไม่พบจึงยอมรับ secondary ที่ไม่มี duration หรือ primary ที่ไม่มี duration และเป็นช่วงเดียวตามการเลือกของผู้ใช้ ช่วงที่มี duration อื่นไม่ถูกเปลี่ยนชื่อเป็น weekly; ถ้าไม่มีช่วงที่เลือกได้แสดง unknown/-- พร้อมซ่อนค่า/reset/bar รองทั้งหมด ข้อมูล telemetry ไม่เปลี่ยน Claude แสดง duration ตามเดิม Weather ไม่มี mini sprites ส่วน Stocks คงภาพคู่หูขนาดเล็กไว้
+โหมดทั้งสองแสดง duration/reset ตามข้อมูลจริง และเรียกช่วง Codex 10080 นาทีว่า Weekly โหมด weekly เลือกช่วง 10080 นาทีจาก primary ก่อน secondary ถ้าไม่พบจึงยอมรับ secondary ที่ไม่มี duration หรือ primary ที่ไม่มี duration และเป็นช่วงเดียวตามการเลือกของผู้ใช้ ช่วงที่มี duration อื่นไม่ถูกเปลี่ยนชื่อเป็น weekly; ถ้าไม่มีช่วงที่เลือกได้แสดง unknown/-- พร้อมซ่อนค่า/reset/bar รองทั้งหมด ข้อมูล telemetry ไม่เปลี่ยน Claude แสดง duration ตามเดิม Weather และ Stocks ไม่มี mini sprites; Stocks แสดงกราฟเล็ก4แถวพร้อมเปลี่ยนช่วงวันนี้/5วัน
 
 บันทึกผ่าน validation และ round-trip ครบทุก field ลง NVS blob ก่อนเปลี่ยน active config (partition 88 KiB รองรับค่าเก่าและค่าใหม่ระหว่าง commit) ถ้า flash save ล้มเหลวได้ HTTP503 และค่าเดิมยังทำงาน Restart ปกติเก็บค่าเดิม หาก NVS มีข้อมูลเสีย firmware หยุดแทนการล้าง secrets โดยอัตโนมัติ
 
@@ -74,27 +83,27 @@ rtk proxy curl --fail-with-body --request POST \
 
 ตัวเลขใน examples เป็นข้อมูลจำลอง Bearer token ไม่มีสิทธิ์แก้ settings และ Basic admin ใช้ส่ง usage ไม่ได้
 
-## อากาศและ Google Sheets
+## Weather และ source configuration
 
 ESP32 อ่านสองแหล่งเองทีละรายการจาก network task แยกกับจอ ตั้ง stocks URL ของ Apps Script ที่ deploy ตาม [คู่มือ Sheets](../integrations/google-sheets/README.md) รวม query `accessToken` หากใช้; Apps Script มัก redirect ไป `script.googleusercontent.com` Firmware ตามได้ไม่เกิน 4 ครั้งภายในงบ 10 วินาทีเดียว ตัด configured headers ทั้งหมดเมื่อ origin เปลี่ยนและไม่ใส่กลับแม้ redirect กลับ origin เดิม ห้าม HTTPS → HTTP
 
-ตัวอย่าง Open-Meteo URL สำหรับกรุงเทพฯ (ต้องตั้งเองใน portal; ไม่ได้เรียกในงานนี้):
+Weather editor เลือก Open-Meteo พร้อมชื่อสถานที่และพิกัด แล้วสร้าง endpoint ให้เมื่อผู้ใช้แก้ค่า provider/พิกัดโดยชัดเจน URL, headers และ mappings แบบกำหนดเองอยู่ใน Advanced และคงเดิมระหว่างโหลด/แก้ส่วนอื่น ตัวอย่าง endpoint สำหรับกรุงเทพฯ:
 
 ```text
 https://api.open-meteo.com/v1/forecast?latitude=13.7563&longitude=100.5018&current=temperature_2m,relative_humidity_2m,weather_code&hourly=temperature_2m,precipitation_probability&forecast_hours=4&timezone=Asia%2FBangkok
 ```
 
-ตาม [Open-Meteo API](https://open-meteo.com/en/docs) `forecast_hours=4` เริ่มที่ชั่วโมงปัจจุบันและคืน 4 ช่วงเวลา เช่น เวลา 12:45 ได้ 12:00–15:00; `forecast_days=1` พร้อม timezone เริ่มที่เที่ยงคืน จึงไม่เหมาะกับตัวอย่างนี้ ดู [response จำลอง](../examples/weather-response.json)
+ตาม [Open-Meteo API](https://open-meteo.com/en/docs) `forecast_hours=4` เริ่มที่ชั่วโมงปัจจุบันและคืน 4 ช่วงเวลา เช่น เวลา 12:45 ได้ 12:00–15:00; `forecast_days=1` พร้อม timezone เริ่มที่เที่ยงคืน จึงไม่เหมาะกับตัวอย่างนี้ ดู [response จำลอง](../examples/weather-response.json). UI แสดงค่าสภาพปัจจุบันและสามช่วงถัดไปจาก response; hourly samples ที่รู้เวลาและอยู่ก่อน observation `updatedAt` จะถูกข้าม จึงไม่แสดงชั่วโมงก่อนเวลาที่ source บอกว่าอัปเดต
 
-Default field mappings อยู่ใน [ตัวอย่าง config](../examples/device-config.example.json) Firmware แสดงสมาชิก 4 ตัวแรกของ mapped hourly arrays ตามลำดับ โดย time/temperature/rain ต้องตรงกันในแต่ละ index และ endpoint ต้องเริ่ม arrays ที่ช่วงเวลาที่ต้องการแสดง Firmware ไม่ค้นหาช่วงเวลาจาก `current.time` ให้อัตโนมัติ HTTP body จำกัด 16384 bytes; ลดขอบเขต response ที่ endpoint หากเกิน cap ปรับ mapping ได้ใน portal ถ้า JSON ต่างจาก Open-Meteo เวลา local ที่ไม่มี UTC offset จะคง unknown
+Default field mappings อยู่ใน [ตัวอย่าง config](../examples/device-config.example.json): `current.is_day`, `hourly.weather_code` และ `hourly.is_day` เป็น optional. หาก source ไม่ส่งค่าเหล่านี้ เงื่อนไขหรือช่วงกลางวัน/กลางคืนจะคง unknown และไม่มีการเดาดวงจันทร์แทนข้อมูลที่หายไป เวลา observation `updatedAt` แปลงเป็น UTC ใน parser แล้วแสดงตาม source UTC offset; receipt age ใช้เวลาตั้งแต่บอร์ดรับสำเร็จและเป็นคนละค่า UI ไม่รายงานว่า observation สดเพียงเพราะเพิ่งรับ response. เวลา local ที่ไม่มี UTC offset คง unknown. HTTP body จำกัด 16384 bytes; ปรับ mappings ได้ใน portal
 
-HTTPS ใช้ certificate bundle และตรวจ hostname/SNI ต้องมี SNTP time ก่อนยิง HTTPS ไม่ปิด certificate validation เมื่อเวลาไม่พร้อม UI ใช้ Bangkok timezone, clock แสดง `--:--` เมื่อไม่รู้เวลา จอใช้ข้อมูลจริงหรือ `--`/unknown เท่านั้น อายุ `age` หมายถึงเวลาตั้งแต่รับสำเร็จบนบอร์ด ไม่ได้ยืนยันอายุ quote ใน Sheet; stale แปลว่ารอบล่าสุดล้มเหลวหรือเกินสองช่วง refresh ราคาที่ขาดไม่แทนด้วย 0
+HTTPS ใช้ certificate bundle และตรวจ hostname/SNI ต้องมี SNTP time ก่อนยิง HTTPS ไม่ปิด certificate validation เมื่อเวลาไม่พร้อม นาฬิกา UI และตารางความสว่างใช้ ICT-7; เวลา weather ใช้ source UTC offset. นาฬิกาแสดง `--:--` เมื่อไม่รู้เวลา UI ใช้ข้อมูลจริงหรือ `--`/unknown เท่านั้น. Source receipt age บอกเวลาตั้งแต่บอร์ดรับสำเร็จ ไม่ยืนยันอายุข้อมูล ณ ต้นทาง; stale แปลว่ารอบล่าสุดล้มเหลวหรือเกินสองช่วง refresh ราคาที่ขาดไม่แทนด้วย 0
 
 ## หน้าจอและข้อจำกัดที่ต้องตรวจบนฮาร์ดแวร์
 
-Pocket Studio ใช้พื้นหลังดำบนจอ 240×320: header 24px, content 232px, LAN IP ที่ y=256 และปุ่ม คู่หู/อากาศ/หุ้น/ตั้งค่า ขนาด 60×44 ที่ y=276 หน้าแรก Claude อยู่บน Codex อยู่ล่าง แต่ละตัวมี usage primary/secondary และ reset ของตนเอง แสดง window ตามจำนวนนาทีจริง (รวมเศษนาที) และ unknown/stale แยกกัน ตัวละครขยับหายใจเพียง 1px โดยไม่แสดงสถานะ working/idle ของ agent หน้าอากาศมีค่าปัจจุบันและ 4 forecast slots จากตัวเลขจริง ไม่มีภาพ radar จำลอง หน้าหุ้นแสดงครั้งละ 3 รายการ ถ้ามี 4–5 รายการจะสลับกลุ่มทุก 6 วินาที ราคาใช้ฟอนต์ 18px และ currency แยกจากราคา ยังแสดง label, changePercent และ quote timestamp ทั้งสองหน้ามี mini characters ปัดซ้าย/ขวาหรือแตะปุ่มท้ายจอเปลี่ยนหน้า Auto rotation ข้าม Setup และเว้นอย่างน้อย 15 วินาทีหลังเลือกหน้าเอง Setup แสดง credentials เฉพาะหน้าเปิดในเครื่องและเลื่อนภายใน content โดยไม่ทับปุ่มท้ายจอ
+Desk Duo ใช้พื้นหลังดำบนจอ 240×320: header 24px, content 232px, LAN IP ที่ y=256 และปุ่ม Duo/Weather/Stocks/Setup ขนาด 60×44 ที่ y=276. Duo แสดง usage จาก provider จริงตามช่วงเวลาที่ส่งมา; ช่วงที่ไม่มีอยู่ยัง unknown และไม่ถูกแทนด้วย 0. Weather ใช้ source observation time และ offset ของ source แยกจากเวลา receipt; หาก source เก่าจะแสดง stale พร้อมเวลา observation. เงื่อนไขและ day/night artwork แสดงเฉพาะเมื่อ mapping มีข้อมูลรองรับ. Stocks แสดงกราฟ sparkline พร้อมสลับ Today/5 days จาก quote data ที่ได้รับ และใช้ timestamp/stale state จาก source. Setup ให้ปรับความสว่างฐานและตั้งค่าภาษา/ตารางตาม API โดยไม่อ้างว่า target brightness คือค่าที่วัดจากแสงจริง
 
-ตัวละครมาจาก [source PNG และ recipe](assets/README.md) ที่สร้างจาก concept ที่ผู้ใช้อนุมัติ ไม่ใช้ ASCII sprites ใน UI แล้ว Compiled RGB565 64×64/32×32 รวม 20,480 bytes อยู่ใน flash; firmware ไม่ decode PNG เต็มภาพ ฟอนต์ Montserrat 18/32 เปิดเหมือนกันใน target และ native preview
+ตัวละครและ weather artwork มาจาก [approved source PNGs และ asset pipeline](assets/README.md). Device ใช้ RGB565 images ที่ compile ไว้ใน flash และไม่ decode source PNG ขนาดเต็มขณะทำงาน; portal ฝัง PNG thumbnails เป็น data URL เพื่อทำงาน offline. ฟอนต์ Montserrat และ Thai fallback ใช้ร่วมกันใน target/native preview
 
 LCD: SPI2 MOSI13 MISO12 CLK14 CS15 DC2 BL21, 40MHz, RGB565, partial buffer 240×24×2 bytes เพียงก้อนเดียว ไม่มี full-screen buffer ซ้ำ Touch XPT2046: SPI3 CLK25 MOSI32 MISO39 CS33 IRQ36, 1MHz; ใช้ median samples และ config `touch` สำหรับ swapAxes/invertX/invertY/minX/maxX/minY/maxY
 
@@ -104,7 +113,7 @@ LCD: SPI2 MOSI13 MISO12 CLK14 CS15 DC2 BL21, 40MHz, RGB565, partial buffer 240×
 
 ## OTA และ USB migration ที่รักษาการตั้งค่า
 
-Partition สำหรับ release 2.0.0: NVS `0x9000`/`0x16000`, PHY `0x1f000`/`0x1000` (ตำแหน่งและขนาดเดิม), OTA data `0x20000`/`0x2000`, OTA 0 `0x30000`/`0x1e0000`, OTA 1 `0x210000`/`0x1e0000`. NVS schema ไม่เปลี่ยน Wi-Fi/admin/usage token/endpoint/touch calibration จึงคงอยู่
+Partition layout dual OTA (introduced in release 2.0.0 and retained in 2.2.0): NVS `0x9000`/`0x16000`, PHY `0x1f000`/`0x1000` (ตำแหน่งและขนาดเดิม), OTA data `0x20000`/`0x2000`, OTA 0 `0x30000`/`0x1e0000`, OTA 1 `0x210000`/`0x1e0000`. NVS schema ไม่เปลี่ยน Wi-Fi/admin/usage token/endpoint/touch calibration จึงคงอยู่
 
 บอร์ดที่ใช้ factory layout เดิมต้อง migrate ทาง USB ครั้งเดียว โดยใช้ไฟล์แยกที่ตรวจสอบแล้ว **ห้ามเขียน merged `desk-duo-cyd.bin` ที่ 0x0 บนบอร์ดที่ตั้งค่าแล้ว** ภาพ merged สำหรับ initial install เท่านั้น และ padding จะล้างการตั้งค่าเดิม `scripts/package_firmware.py` สร้าง app-only, bootloader, partition table, erased OTA initialization, manifest และ merged image; ไม่เข้าถึง serial
 

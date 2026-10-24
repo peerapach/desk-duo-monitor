@@ -14,3 +14,15 @@ artifacts/
 firmware/managed_components/
 firmware/sdkconfig.cyd
 firmware/sdkconfig.cyd.old
+
+# Local authoring, unrelated checkouts and dependency caches
+/.worktrees/
+/graft/
+/node_modules/
+/.npm/
+/.codex/
+/.agents/
+.env.*
+!.env.example
+*.local.yaml
+*.local.yml

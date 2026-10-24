@@ -1,5 +1,7 @@
 // Exercise the production HTML in a real offline Chromium DOM. Run with the
 // existing Playwright runtime via NODE_PATH; no page or dependency is fetched.
+// Run scripts/test_firmware.py first: the Weather GET regression uses its
+// firmware_core_test helper to obtain the actual production redacted response.
 const {test}=require('node:test');
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
@@ -15,7 +17,7 @@ async function open(options={}){
  await page.evaluate(options=>{
   window.displayPollers=[];const nativeTimeout=window.setTimeout;
   window.setTimeout=(fn,ms,...args)=>ms===15000?(displayPollers.push(fn),-displayPollers.length):nativeTimeout(fn,ms,...args);
-  window.scenario=options;window.posts=[];window.display={codexUsageMode:'weekly',language:options.language||'th',brightnessPercent:100,brightnessAuto:false,brightnessDayStart:'06:00',brightnessNightStart:'18:00',brightnessTargetPercent:100,brightnessEffectivePercent:null,brightnessPhase:'manual',...options.display};window.displayLoads=0;
+  window.scenario=options;window.configPosts=[];window.configSnapshot=options.publicConfig||null;window.privateWeatherUrl=options.privateWeatherUrl;window.posts=[];window.display={codexUsageMode:'weekly',language:options.language||'th',brightnessPercent:100,brightnessAuto:false,brightnessDayStart:'06:00',brightnessNightStart:'18:00',brightnessTargetPercent:100,brightnessEffectivePercent:null,brightnessPhase:'manual',...options.display};window.displayLoads=0;
   window.fetch=async(url,request={})=>{
    if(url==='/api/display'){
     if(request.method){const patch=JSON.parse(request.body);posts.push(patch);if(!scenario.saveFails)Object.assign(display,patch);return {ok:!scenario.saveFails,status:scenario.saveFails?503:204};}
@@ -25,10 +27,12 @@ async function open(options={}){
     return {ok:true,json:async()=>({...display})};
    }
    if(url==='/api/firmware')return {ok:true,json:async()=>({version:'2.0.0',capacity:1966080,busy:false,runningPartition:'ota_0'})};
-   if(url==='/api/network')return {ok:true,json:async()=>({stationOnline:true,weatherConfigured:true,weather:{hasData:true,stale:true,temperature:0,humidity:0,weatherCode:3,hourlyCount:4,ageMs:61000},attempt:{attempted:true,currentGeneration:true,outcome:'tls_failure'}})};
+   if(url==='/api/network')return {ok:true,json:async()=>({stationOnline:true,weatherConfigured:true,epochSeconds:options.epochSeconds,weather:{hasData:true,stale:true,temperature:0,humidity:0,weatherCode:3,hourlyCount:4,ageMs:61000,...options.weather},attempt:{attempted:true,currentGeneration:true,outcome:'tls_failure'}})};
    if(url==='/api/config'){
     if(scenario.configFails)throw Error('private config failure');
-    return {ok:true,json:async()=>({currentSSID:'ต้นฉบับ <data>',wifiPasswordConfigured:true,usageTokenConfigured:true,autoRotateSeconds:20,
+    if(request.method){const patch=JSON.parse(request.body);configPosts.push(patch);if(scenario.configSaveFails)return {ok:false,status:503};if(patch.ssid!==undefined)configSnapshot.currentSSID=patch.ssid;if(patch.weather?.url!==undefined)privateWeatherUrl=patch.weather.url;for(const n of ['weather','stocks'])if(patch[n])Object.assign(configSnapshot[n],patch[n]);return {ok:true,status:204};}
+    if(configSnapshot){const result=structuredClone(configSnapshot);for(const n of ['weather','stocks']){const source=result[n];source.urlDetailsHidden=source.urlDetailsHidden||/[?#]/.test(source.url);if(n==='weather'&&source.url.includes('?')){const u=new URL(source.url);if(u.origin==='https://api.open-meteo.com'&&u.pathname==='/v1/forecast'){source.latitude=Number(u.searchParams.get('latitude'));source.longitude=Number(u.searchParams.get('longitude'));}}source.url=source.url.split(/[?#]/)[0];}return {ok:true,json:async()=>result};}
+    return {ok:true,json:async()=> (configSnapshot={currentSSID:'ต้นฉบับ <data>',wifiPasswordConfigured:true,usageTokenConfigured:true,autoRotateSeconds:20,
      touch:{swapAxes:false,invertX:true,invertY:false,minX:294,maxX:3766,minY:248,maxY:3632},
      weather:{url:'https://weather.test/data',headersConfigured:true,urlDetailsHidden:true,label:'กรุงเทพฯ',fields:{temperature:'current.temperature_2m'},refreshSeconds:900},
      stocks:{url:'https://stocks.test/feed',headersConfigured:false,urlDetailsHidden:false,refreshSeconds:300}})};
@@ -36,9 +40,32 @@ async function open(options={}){
    throw Error('Unexpected fetch '+url);
   };
  },options);
- await page.setContent(html);await page.waitForFunction(()=>window.releaseInitialDisplay || document.getElementById('displayStatus').textContent || !document.getElementById('displayButton').disabled);
+ await page.setContent(html);
+ if(!options.navigation)await page.evaluate(()=>{activeSection=undefined;for(const section of document.querySelectorAll('.section-content'))section.hidden=false;document.getElementById('displayButton').hidden=false;document.getElementById('settingsButton').hidden=false;delete document.getElementById('displayButton').dataset.scope;delete document.getElementById('settingsButton').dataset.scope;for(const details of document.querySelectorAll('details'))details.open=true;});
+ await page.waitForFunction(()=>window.releaseInitialDisplay || document.getElementById('displayStatus').textContent || !document.getElementById('displayButton').disabled);
  return page;
 }
+test('actual stock DOM saves Yahoo selection, preserves locale drafts and fits narrow viewport',{timeout:30000},async()=>{
+ const p=await open({language:'en',width:320});
+ await p.locator('#stocksProvider').selectOption('yahoo');
+ await p.locator('#stockMarket0').selectOption('TH');await p.locator('#stockSymbol0').fill('PTT');
+ await p.locator('#stockEnabled0').check();await p.locator('#stocksRange').selectOption('5d');
+ assert.match(await p.locator('#stocksSelectionStored').textContent(),/Not saved/);
+ await p.locator('#language').selectOption('th');assert.equal(await p.locator('#stockSymbol0').inputValue(),'PTT');
+ await p.evaluate(()=>{
+  const previous=fetch;let current;window.stockPosts=[];
+  window.fetch=async(url,request={})=>{
+   if(url!=='/api/config')return previous(url,request);
+   if(request.method){current=await (await previous(url,{})).json();const patch=JSON.parse(request.body);stockPosts.push(patch);Object.assign(current.stocks,{provider:'json',chartRange:'1d',watchlist:[]},patch.stocks);return {ok:true,status:204};}
+   return current?{ok:true,json:async()=>current}:previous(url,request);
+  };
+ });
+ await p.locator('#settingsButton').click();await p.waitForFunction(()=>stockPosts.length===1&&!document.getElementById('settingsButton').disabled);
+ assert.deepEqual(await p.evaluate(()=>stockPosts),[{stocks:{provider:'yahoo',chartRange:'5d',watchlist:[{symbol:'PTT.BK',enabled:true}]}}]);
+ assert.doesNotMatch(await p.locator('#stocksSelectionStored').textContent(),/ยังไม่ได้บันทึก/);
+ assert.equal(await p.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+ await p.locator('#stocksProvider').scrollIntoViewIfNeeded();await p.screenshot({path:require('node:path').join(__dirname,'../.platformio/native-ui-regression/portal-stocks-320.png')});await p.close();
+});
 test('actual portal DOM previews both languages, reads back independent saves, and preserves form data',{timeout:30000},async()=>{
  const page=await open({language:'en'});
  assert.equal(await page.locator('html').getAttribute('lang'),'en');assert.equal(await page.title(),'Desk Duo setup');
@@ -51,7 +78,7 @@ test('actual portal DOM previews both languages, reads back independent saves, a
  assert.equal(await page.locator('#ssid').inputValue(),'ต้นฉบับ <data>');assert.equal(await page.locator('#weatherLabel').inputValue(),'กรุงเทพฯ');
  const text=await page.locator('body').innerText();
  // Only the user-provided SSID may contain Thai in the English fixed copy.
- assert.doesNotMatch(text.replace('ต้นฉบับ <data>',''),/[\u0e00-\u0e7f]/);
+ assert.doesNotMatch(text.replaceAll('ต้นฉบับ <data>','').replaceAll('กรุงเทพฯ',''),/[\u0e00-\u0e7f]/);
  await page.screenshot({path:path.join(__dirname,'../.platformio/native-ui-regression/portal-language-en.png'),fullPage:true});
  await page.locator('#weatherLabel').fill('Untouched editor');await page.locator('#language').selectOption('th');
  assert.equal(await page.locator('html').getAttribute('lang'),'th');assert.match(await page.title(),/ตั้งค่า/);
@@ -208,4 +235,130 @@ test('actual DOM preserves edits made during the first pending GET and then save
  await page.evaluate(()=>releaseInitialDisplay());await page.waitForFunction(()=>!document.getElementById('displayButton').disabled);
  assert.equal(await page.locator('#language').inputValue(),'en');assert.equal(await page.locator('html').getAttribute('lang'),'en');assert.equal(await page.locator('#brightnessPercent').inputValue(),'11');assert.equal(await page.locator('#brightnessDayStart').inputValue(),'07:15');assert.equal(await page.locator('#brightnessNightStart').inputValue(),'20:30');assert.equal(await page.locator('#brightnessAuto').isChecked(),true);assert.equal(await page.locator('#codexUsageMode').inputValue(),'weekly');assert.deepEqual(await page.evaluate(()=>posts),[]);
  await page.locator('#displayButton').click();await page.waitForFunction(()=>posts.length===1&&!document.getElementById('displayButton').disabled);assert.deepEqual(await page.evaluate(()=>posts),[{language:'en',brightnessPercent:11,brightnessDayStart:'07:15'}]);await page.close();
+});
+
+test('six real sections retain drafts and scope configuration saves at 320px',{timeout:30000},async()=>{
+ const p=await open({language:'en',width:320,navigation:true});
+ assert.equal(await p.locator('#sectionSelect option').count(),6);
+ await p.locator('#sectionSelect').selectOption('weather');await p.locator('#weatherLabel').fill('Draft location');
+ await p.locator('#sectionSelect').selectOption('wifi');await p.locator('#ssid').fill('New network');
+ await p.locator('#sectionSave').click();await p.waitForFunction(()=>configPosts.length===1);
+ assert.deepEqual(await p.evaluate(()=>configPosts),[{ssid:'New network'}]);
+ await p.locator('#sectionSelect').selectOption('weather');assert.equal(await p.locator('#weatherLabel').inputValue(),'Draft location');
+ await p.locator('#sectionDiscard').click();assert.equal(await p.locator('#weatherLabel').inputValue(),'กรุงเทพฯ');
+ for(const section of ['display','usage','weather','stocks','wifi','firmware']){
+  await p.locator('#sectionSelect').selectOption(section);
+  assert.equal(await p.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+ }
+ await p.screenshot({path:path.join(__dirname,'../.platformio/native-ui-regression/portal-unified-mobile.png'),fullPage:true});
+ await p.setViewportSize({width:1100,height:1000});await p.locator('[data-section="display"]').click();
+ await p.screenshot({path:path.join(__dirname,'../.platformio/native-ui-regression/portal-unified-desktop.png'),fullPage:true});await p.close();
+});
+
+test('section saves isolate display API fields and retain other invalid drafts',{timeout:30000},async()=>{
+ const p=await open({language:'en',width:320,navigation:true});
+ await p.locator('#sectionSelect').selectOption('weather');await p.locator('#section-weather summary').filter({hasText:'Advanced'}).click();await p.locator('#weatherHeaders').fill('{invalid draft');
+ await p.locator('#sectionSelect').selectOption('usage');await p.locator('#codexUsageMode').selectOption('both');
+ await p.locator('#sectionSelect').selectOption('display');await p.locator('#brightnessPercent').fill('55');await p.locator('#sectionSave').click();
+ await p.waitForFunction(()=>posts.length===1&&!document.getElementById('displayButton').disabled);
+ assert.deepEqual(await p.evaluate(()=>posts),[{brightnessPercent:55}]);
+ await p.locator('#sectionSelect').selectOption('usage');assert.equal(await p.locator('#codexUsageMode').inputValue(),'both');
+ await p.locator('#sectionSave').click();await p.waitForFunction(()=>posts.length===2);assert.deepEqual(await p.evaluate(()=>posts[1]),{codexUsageMode:'both'});
+ await p.locator('#sectionSelect').selectOption('weather');assert.equal(await p.locator('#weatherHeaders').inputValue(),'{invalid draft');await p.close();
+});
+
+test('usage mode saves independently of an invalid unsaved Display schedule',{timeout:30000},async()=>{
+ const p=await open({language:'en',width:320,navigation:true});
+ await p.locator('#brightnessDayStart').fill('18:00');
+ await p.locator('#sectionSelect').selectOption('usage');await p.locator('#codexUsageMode').selectOption('both');await p.locator('#sectionSave').click();
+ await p.waitForFunction(()=>posts.length||document.getElementById('displayStatus').textContent.includes('HH:MM'));
+ assert.deepEqual(await p.evaluate(()=>posts),[{codexUsageMode:'both'}]);
+ await p.locator('#sectionSelect').selectOption('display');assert.equal(await p.locator('#brightnessDayStart').inputValue(),'18:00');await p.close();
+});
+
+test('Open-Meteo save rejects invalid or missing friendly coordinates without sending an older URL',{timeout:30000},async()=>{
+ const p=await open({language:'en',width:320,navigation:true});await p.locator('#sectionSelect').selectOption('weather');
+ await p.locator('#weatherLatitude').fill('13');await p.locator('#weatherLongitude').fill('100');await p.locator('#weatherProvider').selectOption('open-meteo');
+ const generated=await p.locator('#weatherUrl').inputValue();
+ for(const [id,value] of [['weatherLatitude','91'],['weatherLatitude','-91'],['weatherLongitude','181'],['weatherLatitude',''],['weatherLongitude','']]){
+  await p.locator('#weatherLatitude').fill('13');await p.locator('#weatherLongitude').fill('100');await p.locator('#'+id).fill(value);await p.locator('#sectionSave').click();
+  assert.deepEqual(await p.evaluate(()=>configPosts),[]);assert.equal(await p.locator('#'+id).inputValue(),value);
+  assert.match(await p.locator('#status').textContent(),/Coordinates require valid/);
+ }
+ await p.locator('#weatherLatitude').fill('13');await p.locator('#weatherLongitude').fill('100');await p.locator('#weatherLongitude').dispatchEvent('change');
+ const url=new URL(await p.locator('#weatherUrl').inputValue());assert.match(url.searchParams.get('hourly'),/precipitation_probability/);
+ assert.equal(JSON.parse(await p.locator('#weatherFields').inputValue()).hourlyRainProbability,'hourly.precipitation_probability');assert.ok(generated);await p.close();
+});
+
+test('friendly weather edits derive complete forecasts only after explicit provider choice',{timeout:30000},async()=>{
+ const p=await open({language:'en',width:320,navigation:true});await p.locator('#sectionSelect').selectOption('weather');
+ assert.equal(await p.locator('#weatherProvider').inputValue(),'custom');assert.equal(await p.locator('#weatherUrl').inputValue(),'');
+ await p.locator('#weatherLatitude').fill('13.7563');await p.locator('#weatherLongitude').fill('100.5018');await p.locator('#weatherLongitude').dispatchEvent('change');
+ assert.equal(await p.locator('#weatherUrl').inputValue(),'');
+ await p.locator('#weatherProvider').selectOption('open-meteo');
+ const url=new URL(await p.locator('#weatherUrl').inputValue());assert.equal(url.searchParams.get('latitude'),'13.7563');assert.equal(url.searchParams.get('longitude'),'100.5018');assert.match(url.searchParams.get('current'),/is_day/);assert.match(url.searchParams.get('hourly'),/weather_code,is_day/);
+ const fields=JSON.parse(await p.locator('#weatherFields').inputValue());assert.equal(fields.isDay,'current.is_day');assert.equal(fields.hourlyWeatherCodes,'hourly.weather_code');
+ await p.locator('#sectionSave').click();await p.waitForFunction(()=>configPosts.length===1);
+ assert.equal((await p.evaluate(()=>configPosts))[0].weather.url,url.href);assert.deepEqual(await p.evaluate(()=>posts),[]);await p.close();
+});
+
+test('production redacted Weather GET hydrates safe coordinates and preserves secret URL on scoped saves',{timeout:30000},async()=>{
+ const privateWeatherUrl='https://api.open-meteo.com/v1/forecast?latitude=13.7563&longitude=100.5018&apikey=hidden-key';
+ const publicConfig=JSON.parse(require('node:child_process').execFileSync(path.join(__dirname,'../.platformio/native-tests/firmware_core_test'),['--public-weather-config',privateWeatherUrl],{encoding:'utf8'}));
+ assert.equal(publicConfig.weather.url,'https://api.open-meteo.com/v1/forecast');assert.equal(JSON.stringify(publicConfig).includes('hidden-key'),false);
+ const p=await open({language:'en',width:320,navigation:true,publicConfig,privateWeatherUrl});await p.locator('#sectionSelect').selectOption('weather');
+ assert.equal(await p.locator('#weatherLatitude').inputValue(),'13.7563');assert.equal(await p.locator('#weatherLongitude').inputValue(),'100.5018');assert.equal(await p.locator('#weatherUrl').inputValue(),'');
+ await p.locator('#weatherLabel').fill('New label');await p.locator('#sectionSave').click();await p.waitForFunction(()=>configPosts.length===1);
+ assert.deepEqual(await p.evaluate(()=>configPosts[0]),{weather:{label:'New label'}});assert.equal(await p.evaluate(()=>privateWeatherUrl),privateWeatherUrl);
+ await p.evaluate(()=>load());await p.locator('#weatherRefresh').fill('1200');await p.locator('#sectionSave').click();await p.waitForFunction(()=>configPosts.length===2);
+ assert.deepEqual(await p.evaluate(()=>configPosts[1]),{weather:{refreshSeconds:1200}});assert.equal(await p.evaluate(()=>privateWeatherUrl),privateWeatherUrl);assert.equal(await p.locator('#weatherUrl').inputValue(),'');await p.close();
+});
+test('legacy redacted Weather GET permits unchanged source edits but requires coordinates after explicit friendly edits',{timeout:30000},async()=>{
+ const p=await open({language:'en',width:320,navigation:true});
+ await p.evaluate(async()=>{configSnapshot.weather.url='https://api.open-meteo.com/v1/forecast';configSnapshot.weather.urlDetailsHidden=true;delete configSnapshot.weather.latitude;delete configSnapshot.weather.longitude;await load();});
+ await p.locator('#sectionSelect').selectOption('weather');assert.equal(await p.locator('#weatherLatitude').inputValue(),'');
+ await p.locator('#weatherFields').evaluate(node=>node.closest('details').open=true);await p.locator('#weatherLabel').fill('Legacy label');await p.locator('#weatherRefresh').fill('1200');await p.locator('#weatherFields').fill('{"temperature":"current.temp"}');await p.locator('#sectionSave').click();
+ await p.waitForFunction(()=>configPosts.length||document.getElementById('status').textContent.includes('Coordinates require'));
+ assert.deepEqual(await p.evaluate(()=>configPosts),[{weather:{label:'Legacy label',refreshSeconds:1200,fields:{temperature:'current.temp'}}}]);
+ await p.locator('#weatherLatitude').fill('91');await p.locator('#weatherLatitude').dispatchEvent('change');await p.locator('#weatherLabel').fill('Blocked');await p.locator('#sectionSave').click();assert.equal(await p.evaluate(()=>configPosts.length),1);assert.match(await p.locator('#status').textContent(),/Coordinates require/);
+ await p.locator('#sectionDiscard').click();await p.locator('#weatherProvider').selectOption('custom');await p.locator('#weatherProvider').selectOption('open-meteo');await p.locator('#weatherLabel').fill('Still blocked');await p.locator('#sectionSave').click();assert.equal(await p.evaluate(()=>configPosts.length),1);assert.match(await p.locator('#status').textContent(),/Coordinates require/);await p.close();
+});
+
+test('firmware review shows real size before any binary request',{timeout:30000},async()=>{
+ const p=await open({language:'en',width:320,navigation:true});await p.locator('#sectionSelect').selectOption('firmware');
+ await p.evaluate(()=>{window.binaryPosts=0;window.XMLHttpRequest=class{constructor(){this.upload={};}open(){}setRequestHeader(){}send(){binaryPosts++;}};});
+ await p.locator('#firmwareFile').setInputFiles({name:'desk-duo-app.bin',mimeType:'application/octet-stream',buffer:Buffer.alloc(2048)});
+ assert.match(await p.locator('#firmwareSelected').textContent(),/2048 bytes/);await p.locator('#firmwareButton').click();
+ await p.waitForFunction(()=>!document.getElementById('firmwareReview').hidden);assert.match(await p.locator('#firmwareReview').textContent(),/2048 bytes/);assert.equal(await p.evaluate(()=>binaryPosts),0);
+ await p.locator('#firmwareButton').click();await p.waitForFunction(()=>binaryPosts===1);await p.close();
+});
+
+test('approved identity thumbnails and weather artwork render offline from actual condition flags',{timeout:30000},async()=>{
+ const p=await open({language:'th',width:320,navigation:true,epochSeconds:1792702800,weather:{weatherCode:2,isDay:false,updatedAt:1792616400,utcOffsetSeconds:25200,stale:false,ageMs:0}});
+ await p.locator('#sectionSelect').selectOption('usage');
+ assert.equal(await p.locator('#claudeIdentity').count(),1);assert.equal(await p.locator('#codexIdentity').count(),1);
+ for(const id of ['claudeIdentity','codexIdentity'])assert.equal(await p.locator('#'+id).evaluate(img=>img.complete&&img.naturalWidth===64),true);
+ await p.screenshot({path:path.join(__dirname,'../.platformio/native-ui-regression/portal-approved-usage-th-320.png'),fullPage:true});
+ await p.locator('#sectionSelect').selectOption('weather');assert.equal(await p.locator('#weatherArtwork').getAttribute('data-tile'),'3');assert.match(await p.locator('#weatherDataStatus').textContent(),/ข้อมูลเก่า/);
+ assert.equal(await p.locator('#weatherArtwork').evaluate(img=>img.complete&&img.naturalWidth===80),true);
+ await p.screenshot({path:path.join(__dirname,'../.platformio/native-ui-regression/portal-approved-weather-th-320.png'),fullPage:true});
+ await p.locator('#sectionSelect').selectOption('display');await p.locator('#language').selectOption('en');await p.locator('#sectionSelect').selectOption('weather');
+ assert.equal(await p.locator('#weatherArtwork').getAttribute('data-tile'),'3');assert.equal(await p.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+ await p.setViewportSize({width:1100,height:1000});await p.screenshot({path:path.join(__dirname,'../.platformio/native-ui-regression/portal-approved-weather-en-desktop.png'),fullPage:true});
+ for(const [code,isDay,tile] of [[1,true,'0'],[2,true,'1'],[0,false,'2'],[3,null,'4'],[61,null,'5']]){await p.evaluate(([weatherCode,isDay])=>{scenario.weather={weatherCode,isDay};},[code,isDay]);await p.locator('#networkRefresh').click();await p.waitForFunction(tile=>document.getElementById('weatherArtwork').dataset.tile===tile,tile);}
+ await p.close();
+ const unknown=await open({language:'en',navigation:true,weather:{weatherCode:0,isDay:null}});await unknown.locator('[data-section="weather"]').click();assert.equal(await unknown.locator('#weatherArtwork').isHidden(),true);await unknown.close();
+});
+
+test('failed scoped save retains saved state and draft; TH and EN navigation fit 320px',{timeout:30000},async()=>{
+ for(const language of ['en','th']){
+  const p=await open({language,width:320,navigation:true,configSaveFails:true});
+  await p.locator('#sectionSelect').selectOption('wifi');await p.locator('#ssid').fill('Uncommitted');await p.locator('#sectionSave').click();
+  await p.waitForFunction(()=>configPosts.length===1);assert.equal(await p.locator('#ssid').inputValue(),'Uncommitted');assert.match(await p.locator('#sectionState').textContent(),/ต้นฉบับ/);assert.match(await p.locator('#status').textContent(),/Maintenance|บันทึกไม่สำเร็จ/);
+  await p.locator('#sectionSelect').selectOption('display');await p.locator('#language').selectOption(language==='en'?'th':'en');
+  await p.locator('#sectionSelect').selectOption('wifi');assert.equal(await p.locator('#ssid').inputValue(),'Uncommitted');
+  await p.locator('#sectionSelect').selectOption('display');await p.locator('#language').selectOption(language);
+  for(const section of ['display','usage','weather','stocks','wifi','firmware']){await p.locator('#sectionSelect').selectOption(section);assert.equal(await p.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);await p.screenshot({path:path.join(__dirname,'../.platformio/native-ui-regression/portal-unified-'+section+'-'+language+'-320.png'),fullPage:true});}
+  await p.close();
+ }
 });

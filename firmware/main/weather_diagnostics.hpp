@@ -12,7 +12,7 @@ enum class WeatherOutcome : uint8_t {
 enum class WeatherParserReason : uint8_t {
     None, Other, Size, Json, Duplicate, Depth, Shape, UpstreamError, Mapping,
     Temperature, Humidity, WeatherCode, UtcOffset, UpdatedAt, Hourly,
-    HourlyTime, HourlyTemperature, RainProbability, NoReadings
+    HourlyTime, HourlyTemperature, RainProbability, NoReadings, IsDay, HourlyWeatherCode, HourlyIsDay
 };
 struct WeatherHeap {
     std::optional<uint32_t> freeBytes, largestBlock;

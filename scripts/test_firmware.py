@@ -50,6 +50,17 @@ def main() -> int:
                            str(ROOT / "firmware/main/core.cpp"), str(ROOT / "tests/firmware_core_test.cpp"),
                            str(cjson_object), "-o", str(test_binary)])
     run([str(test_binary), str(ROOT)])
+    for name in ("presentation_status", "weather_request"):
+        binary = output / (name + "_test")
+        run(compiler("c++") + ["-std=c++17", "-Wall", "-Wextra", "-Werror", "-I", str(sdk),
+                               str(ROOT / ("firmware/main/" + name + ".cpp")),
+                               str(ROOT / ("tests/" + name + "_test.cpp")), str(cjson_object), "-o", str(binary)])
+        run([str(binary)])
+    stocks = output / "stock_source_test"
+    run(compiler("c++") + ["-std=c++17", "-Wall", "-Wextra", "-Werror", "-I", str(sdk),
+                           str(ROOT / "firmware/main/core.cpp"), str(ROOT / "firmware/main/stock_source.cpp"),
+                           str(ROOT / "tests/stock_source_test.cpp"), str(cjson_object), "-o", str(stocks)])
+    run([str(stocks)])
     policy = output / "brightness_policy_test"
     run(compiler("c++") + ["-std=c++17", "-Wall", "-Wextra", "-Werror", "-I", str(sdk),
                            str(ROOT / "firmware/main/core.cpp"), str(ROOT / "firmware/main/brightness_policy.cpp"),
@@ -90,7 +101,7 @@ def main() -> int:
     run([str(ota)])
     routes = output / "ota_routes_test"
     run(compiler("c++") + ["-std=c++17", "-Wall", "-Wextra", "-Werror", "-I", str(ROOT / "tests/ota_sdk"), "-I", str(sdk),
-                           str(ROOT / "firmware/main/core.cpp"), str(ROOT / "firmware/main/ota.cpp"), str(ROOT / "firmware/main/portal.cpp"), str(ROOT / "firmware/main/assets.cpp"), str(ROOT / "firmware/main/brightness_policy.cpp"),
+                           str(ROOT / "firmware/main/core.cpp"), str(ROOT / "firmware/main/ota.cpp"), str(ROOT / "firmware/main/portal.cpp"), str(ROOT / "firmware/main/presentation_status.cpp"), str(ROOT / "firmware/main/assets.cpp"), str(ROOT / "firmware/main/brightness_policy.cpp"),
                            str(ROOT / "tests/ota_routes_test.cpp"), str(cjson_object), "-o", str(routes)])
     run([str(routes)])
     run([str(routes), "--idle-capacity"])

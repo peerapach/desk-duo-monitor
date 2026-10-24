@@ -94,6 +94,8 @@ void esp_restart(){throw Reboot{};}
 namespace deskduo {
 std::optional<uint8_t> backlight_last_applied_percent(){return appliedPercent;}
 RequestConfig runtime_config(){auto c=defaultConfig();c.setupPassword="test-admin";c.usageToken="test-usage-token-123";c.ssid="saved-network";c.wifiPassword="test-wifi-secret";c.weather.url="https://weather.test/data?key=test-query-secret";c.weather.headers={{"X-Key","test-header-secret"}};return {c,0};}
+Snapshot dashboardSnapshot;
+Snapshot runtime_snapshot(){return dashboardSnapshot;}
 DisplayPreference displayPreference;
 bool displaySave=true;int displayWrites=0;
 DisplaySettings runtime_display_settings(){return displayPreference.settings();}
@@ -108,8 +110,30 @@ std::string input_diagnostics_json(){return R"({"sequence":19,"lastPollTimeMs":2
 }
 int main(int argc,char**){
     using namespace deskduo;
-    portal_init();assert(routes.count({"/api/network",HTTP_GET}) && !routes.count({"/api/network",HTTP_POST}));assert(routes.size()==10);
-    assert(serverConfig.max_uri_handlers==10 && serverConfig.max_open_sockets==4 && serverConfig.lru_purge_enable);
+    portal_init();assert(routes.count({"/api/network",HTTP_GET}) && !routes.count({"/api/network",HTTP_POST}));assert(routes.size()==11);
+    assert(serverConfig.max_uri_handlers==11 && serverConfig.max_open_sockets==4 && serverConfig.lru_purge_enable);
+    assert(routes.count({"/api/dashboard",HTTP_GET}) && !routes.count({"/api/dashboard",HTTP_POST}));
+    for(auto credential:{"","Bearer test-usage-token-123","Basic wrong"}) {
+        auto e=exchange();e.headers["Authorization"]=credential;auto r=request(e,"/api/dashboard",HTTP_GET);
+        assert(dispatch(r)==ESP_FAIL && e.status=="401 Unauthorized" && e.reads==0);
+    }
+    { auto e=exchange();auto r=request(e,"/api/dashboard",HTTP_GET);
+      assert(dispatch(r)==ESP_OK && e.status=="200 OK" && e.contentType=="application/json" && e.reads==0);
+      assert(e.response==R"({"claude":{"hasData":false,"stale":false,"updatedAt":null,"primary":null,"secondary":null},"codex":{"hasData":false,"stale":false,"updatedAt":null,"primary":null,"secondary":null},"stock":{"hasData":false,"stale":false,"symbol":"","currency":"","price":null,"changePercent":null,"quotedAt":null,"chartRange":"1d","history":[]}})");
+      for(auto secret:{"test-admin","test-usage-token-123","test-wifi-secret","test-query-secret","test-header-secret","saved-network"}) assert(e.response.find(secret)==std::string::npos);
+      assert(e.responseHeaders.at("Cache-Control")=="no-store" && patches==0 && usage==0);
+    }
+    {
+      Usage actual;actual.provider="claude";actual.updatedAt=1790000000;actual.primary=UsageWindow{23.5,300,1790000100};
+      dashboardSnapshot.claude={actual,1,false,true};
+      Stocks quotes;quotes.count=1;quotes.items[0].symbol="AAPL";quotes.items[0].currency="USD";quotes.items[0].price=249.5;
+      dashboardSnapshot.stocks={quotes,1,false,false};
+      auto e=exchange();auto r=request(e,"/api/dashboard",HTTP_GET);
+      assert(dispatch(r)==ESP_OK && e.response.find(R"("primary":{"usedPercent":23.5,"windowMinutes":300,"resetsAt":1790000100})")!=std::string::npos);
+      assert(e.response.find(R"("symbol":"AAPL","currency":"USD","price":249.5)")!=std::string::npos);
+      assert(e.response.find(R"("hasData":true,"stale":true)")!=std::string::npos && e.response.size()<4096 && patches==0 && usage==0);
+      dashboardSnapshot={};
+    }
     // A full embedded page must remain available without page-sized application heap.
     const auto pageBytes=std::strlen(portal_html);
     {
@@ -124,7 +148,7 @@ int main(int argc,char**){
         }
         assert(result==ESP_OK && e.status=="200 OK" && e.response==portal_html);
         assert(e.contentType=="text/html; charset=utf-8" && e.reads==0);
-        assert(e.responseHeaders.at("Content-Security-Policy")=="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
+        assert(e.responseHeaders.at("Content-Security-Policy")=="default-src 'none'; img-src data:; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
         assert(e.responseHeaders.at("X-Content-Type-Options")=="nosniff");
         assert(e.responseHeaders.at("Cache-Control")=="no-store");
         std::cout<<"Full embedded root body ("<<pageBytes<<" bytes) served under allocation limit\n";

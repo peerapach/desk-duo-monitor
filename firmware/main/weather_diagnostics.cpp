@@ -20,7 +20,7 @@ WeatherAttempt WeatherDiagnostics::snapshot() const {
 namespace {
 constexpr const char* parserNames[] = {"none", "other", "size", "json", "duplicate", "depth", "shape",
     "upstream_error", "mapping", "temperature", "humidity", "weather_code", "utc_offset", "updated_at",
-    "hourly", "hourly_time", "hourly_temperature", "rain_probability", "no_readings"};
+    "hourly", "hourly_time", "hourly_temperature", "rain_probability", "no_readings", "is_day", "hourly_weather_code", "hourly_is_day"};
 template<class T> void number(cJSON* object, const char* name, const std::optional<T>& value) {
     if (value) cJSON_AddNumberToObject(object, name, *value); else cJSON_AddNullToObject(object, name);
 }
@@ -71,6 +71,10 @@ std::string weatherDiagnosticsJson(const WeatherAttempt& a, const WeatherView& c
     number(weather, "temperature", w.data ? w.data->temperature : std::nullopt);
     number(weather, "humidity", w.data ? w.data->humidity : std::nullopt);
     number(weather, "weatherCode", w.data ? w.data->weatherCode : std::nullopt);
+    number(weather, "updatedAt", w.data ? w.data->updatedAt : std::nullopt);
+    number(weather, "utcOffsetSeconds", w.data ? w.data->utcOffsetSeconds : std::nullopt);
+    if (w.data && w.data->isDay) cJSON_AddBoolToObject(weather, "isDay", *w.data->isDay);
+    else cJSON_AddNullToObject(weather, "isDay");
     number(weather, "hourlyCount", w.data ? std::optional<std::size_t>(w.data->hourlyCount) : std::nullopt);
     char* encoded = cJSON_PrintUnformatted(root);
     std::string result = encoded ? encoded : "{}";

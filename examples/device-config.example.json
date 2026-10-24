@@ -11,14 +11,23 @@
       "temperature": "current.temperature_2m",
       "humidity": "current.relative_humidity_2m",
       "weatherCode": "current.weather_code",
+      "isDay": "current.is_day",
       "updatedAt": "current.time",
       "utcOffsetSeconds": "utc_offset_seconds",
       "hourlyTimes": "hourly.time",
       "hourlyTemperatures": "hourly.temperature_2m",
-      "hourlyRainProbability": "hourly.precipitation_probability"
+      "hourlyRainProbability": "hourly.precipitation_probability",
+      "hourlyWeatherCodes": "hourly.weather_code",
+      "hourlyIsDay": "hourly.is_day"
     }
   },
   "stocks": {
+    "provider": "yahoo",
+    "watchlist": [
+      {"symbol": "PTT.BK", "enabled": true},
+      {"symbol": "AAPL", "enabled": true}
+    ],
+    "chartRange": "1d",
     "url": "",
     "headers": {},
     "refreshSeconds": 300

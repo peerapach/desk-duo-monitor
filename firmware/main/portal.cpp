@@ -1,4 +1,5 @@
 #include "portal.hpp"
+#include "presentation_status.hpp"
 #include "input.hpp"
 #include "network.hpp"
 #include "runtime.hpp"
@@ -50,7 +51,7 @@ esp_err_t route(httpd_req_t* request) {
     if (request->method == HTTP_GET) {
         if (path == "/") {
             httpd_resp_set_type(request, "text/html; charset=utf-8");
-            httpd_resp_set_hdr(request, "Content-Security-Policy", "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
+            httpd_resp_set_hdr(request, "Content-Security-Policy", "default-src 'none'; img-src data:; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
             return respond(request, 200, portal_html);
         }
         httpd_resp_set_type(request, "application/json");
@@ -68,6 +69,7 @@ esp_err_t route(httpd_req_t* request) {
                 ",\"brightnessEffectivePercent\":" + (effective ? std::to_string(*effective) : "null") +
                 ",\"brightnessPhase\":\"" + brightness_phase_name(plan.phase) + "\"}");
         }
+        if (path == "/api/dashboard") return respond(request, 200, dashboard_json(runtime_snapshot()));
         if (path == "/api/network") return respond(request, 200, network_diagnostics_json());
         if (path == "/api/touch") return respond(request, 200, input_diagnostics_json());
         return respond(request, 200, path == "/api/firmware" ? ota_status_json() : redactedConfig(config));
@@ -108,11 +110,11 @@ void portal_init() {
     // IDF's LRU excludes for_async_req sessions, so idle clients can be
     // reclaimed for status/usage without evicting the active upload worker.
     settings.max_open_sockets = 4; settings.lru_purge_enable = true;
-    settings.max_uri_handlers = 10;
+    settings.max_uri_handlers = 11;
     settings.recv_wait_timeout = 1; settings.send_wait_timeout = 2;
     httpd_handle_t server;
     ESP_ERROR_CHECK(httpd_start(&server, &settings));
-    for (const auto& path : {"/", "/api/config", "/api/firmware", "/api/touch", "/api/display", "/api/network"}) {
+    for (const auto& path : {"/", "/api/config", "/api/firmware", "/api/touch", "/api/display", "/api/network", "/api/dashboard"}) {
         httpd_uri_t uri{}; uri.uri = path; uri.method = HTTP_GET; uri.handler = route;
         ESP_ERROR_CHECK(httpd_register_uri_handler(server, &uri));
     }

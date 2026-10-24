@@ -50,7 +50,7 @@ Status: `READY — hardware-independent software milestone`.
 | Workspace | Only approved spec existed; project-local Git was initialized on codex/desk-duo after parent repository discovery | Scope all changes to esp32-monitor | Check git root and diff | No existing software to migrate |
 | Stocks | Spec's columns, JSON, missing-value rule; Google ContentService and Web App docs | New endpoint source against spec addendum | Node VM handler tests; sample response | No real Sheet or deployment yet |
 | Usage | Spec + primary receiver contract | New stdin normalizer and HTTP sender | Python unit tests and loopback HTTP receiver | Firmware contract only; not physical ESP32 verification |
-| Runtime | Python available; bundled Node v24.19.0 at `/Users/peerapach.v/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node` | No third-party packages needed for this milestone | Native test runners | No PlatformIO / ESP-IDF and no detected USB board at preflight |
+| Runtime | Python available; bundled Node v24.19.0 at `node` | No third-party packages needed for this milestone | Native test runners | No PlatformIO / ESP-IDF and no detected USB board at preflight |
 
 ## Files and Ownership
 
@@ -89,7 +89,7 @@ Also cover: reordered headers, trailing blank rows, empty sheet/header-only, mis
 
 - [x] **Step 2: Run RED.**
 
-Run `rtk proxy /Users/peerapach.v/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node --test tests/stocks_endpoint.test.cjs`. Record relevant failing output and why the missing behavior causes it.
+Run `rtk proxy node --test tests/stocks_endpoint.test.cjs`. Record relevant failing output and why the missing behavior causes it.
 
 - [x] **Step 3: Implement buildStocksPayload and doGet.**
 
