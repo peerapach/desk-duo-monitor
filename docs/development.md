@@ -47,3 +47,19 @@ Generated C fonts and RGB565 arrays are source files. Commit them together with 
 ## Working files
 
 Keep experiments, comparison images, and local reports in `.worktrees/`, rather than a temporary directory outside the repository. Do not commit `.worktrees/`, `.platformio/`, `.venv/`, `.device-backups/`, `artifacts/`, `node_modules/`, or `*.local.json`. The `graft/` directory is a separate checkout, not part of Desk Duo.
+
+## GitHub Actions and releases
+
+The [Firmware workflow](../.github/workflows/firmware.yml) uses Ubuntu 24.04 and Python 3.12. Relevant changes on `main` and pull requests trigger builds; **Actions → Firmware → Run workflow** starts a manual build. It installs pinned build requirements, builds `cyd`, runs portable C++ and Python tests, and validates the firmware package. Successful builds retain downloadable artifacts for 30 days.
+
+A pushed `v*` tag publishes a GitHub Release only after the build and package checks pass. The tag must exactly match `v` plus `PROJECT_VER` from `firmware/CMakeLists.txt` and the compiled application version. For each release, update the version, commit the source, and push its version tag. Existing releases are not overwritten automatically.
+
+Release downloads include:
+
+- `desk-duo-app.bin`: application-only Wi-Fi OTA image.
+- `desk-duo-cyd.bin`: merged initial-install image; do not use it to update a configured board.
+- `bootloader.bin`, `partitions.bin`, and `ota_data_initial.bin`: segments for the documented USB migration procedure.
+- `desk-duo-cyd.json`, `desk-duo-cyd.sha256`, and `SHA256SUMS`: offsets, provenance, and checksums.
+- `notices.zip`: third-party licenses.
+
+The build job has read-only repository access. Only the tag-release job can write releases, using GitHub's built-in token; no additional repository secret is needed. CI builds and packages firmware; it does not flash a device.

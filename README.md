@@ -33,6 +33,12 @@ Your Mac sends AI usage through CodexBar hooks. The ESP32 fetches weather and st
 
 Firmware uses ESP-IDF and LVGL. Pin assignments and flashing instructions are documented in the [firmware guide](firmware/README.md).
 
+## Downloads
+
+Download firmware from [GitHub Releases](https://github.com/peerapach/desk-duo-monitor/releases). Choose `desk-duo-app.bin` for Wi-Fi OTA. The merged `desk-duo-cyd.bin` is for initial USB installation; it can erase settings on a configured board. Each release includes checksums, migration segments, and third-party notices.
+
+The [Firmware workflow](https://github.com/peerapach/desk-duo-monitor/actions/workflows/firmware.yml) builds and verifies the CYD firmware on relevant pushes to `main`, pull requests, and manual runs. Version tags publish a release after successful validation. See [CI and releases](docs/development.md#github-actions-and-releases).
+
 ## Getting started
 
 ### 1. Build and install the firmware
